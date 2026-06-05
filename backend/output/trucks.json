@@ -1,0 +1,222 @@
+[
+  {
+    "_id": "TRK001",
+    "name": "TRK001",
+    "fuel": 90,
+    "load": 21,
+    "speed": 44,
+    "signal": 98,
+    "latency": 19,
+    "battery": 94,
+    "status": "active"
+  },
+  {
+    "_id": "TRK002",
+    "name": "TRK002",
+    "fuel": 67,
+    "load": 73,
+    "speed": 37,
+    "signal": 92,
+    "latency": 22,
+    "battery": 97,
+    "status": "active"
+  },
+  {
+    "_id": "TRK003",
+    "name": "TRK003",
+    "fuel": 73,
+    "load": 80,
+    "speed": 34,
+    "signal": 70,
+    "latency": 10,
+    "battery": 95,
+    "status": "active"
+  },
+  {
+    "_id": "TRK004",
+    "name": "TRK004",
+    "fuel": 99,
+    "load": 62,
+    "speed": 44,
+    "signal": 84,
+    "latency": 24,
+    "battery": 96,
+    "status": "active"
+  },
+  {
+    "_id": "TRK005",
+    "name": "TRK005",
+    "fuel": 66,
+    "load": 21,
+    "speed": 44,
+    "signal": 98,
+    "latency": 12,
+    "battery": 98,
+    "status": "active"
+  },
+  {
+    "_id": "TRK006",
+    "name": "TRK006",
+    "fuel": 68,
+    "load": 23,
+    "speed": 30,
+    "signal": 80,
+    "latency": 11,
+    "battery": 94,
+    "status": "active"
+  },
+  {
+    "_id": "TRK007",
+    "name": "TRK007",
+    "fuel": 77,
+    "load": 64,
+    "speed": 27,
+    "signal": 94,
+    "latency": 16,
+    "battery": 84,
+    "status": "active"
+  },
+  {
+    "_id": "TRK008",
+    "name": "TRK008",
+    "fuel": 96,
+    "load": 3,
+    "speed": 24,
+    "signal": 86,
+    "latency": 16,
+    "battery": 82,
+    "status": "active"
+  },
+  {
+    "_id": "TRK009",
+    "name": "TRK009",
+    "fuel": 73,
+    "load": 69,
+    "speed": 34,
+    "signal": 73,
+    "latency": 16,
+    "battery": 91,
+    "status": "active"
+  },
+  {
+    "_id": "TRK010",
+    "name": "TRK010",
+    "fuel": 62,
+    "load": 56,
+    "speed": 25,
+    "signal": 70,
+    "latency": 14,
+    "battery": 91,
+    "status": "active"
+  },
+  {
+    "_id": "TRK011",
+    "name": "TRK011",
+    "fuel": 91,
+    "load": 27,
+    "speed": 39,
+    "signal": 79,
+    "latency": 22,
+    "battery": 90,
+    "status": "active"
+  },
+  {
+    "_id": "TRK012",
+    "name": "TRK012",
+    "fuel": 83,
+    "load": 29,
+    "speed": 25,
+    "signal": 88,
+    "latency": 19,
+    "battery": 81,
+    "status": "active"
+  },
+  {
+    "_id": "TRK013",
+    "name": "TRK013",
+    "fuel": 79,
+    "load": 50,
+    "speed": 31,
+    "signal": 86,
+    "latency": 27,
+    "battery": 88,
+    "status": "active"
+  },
+  {
+    "_id": "TRK014",
+    "name": "TRK014",
+    "fuel": 89,
+    "load": 73,
+    "speed": 25,
+    "signal": 76,
+    "latency": 27,
+    "battery": 93,
+    "status": "active"
+  },
+  {
+    "_id": "TRK015",
+    "name": "TRK015",
+    "fuel": 83,
+    "load": 4,
+    "speed": 30,
+    "signal": 97,
+    "latency": 12,
+    "battery": 95,
+    "status": "active"
+  },
+  {
+    "_id": "TRK016",
+    "name": "TRK016",
+    "fuel": 73,
+    "load": 73,
+    "speed": 22,
+    "signal": 77,
+    "latency": 14,
+    "battery": 87,
+    "status": "active"
+  },
+  {
+    "_id": "TRK017",
+    "name": "TRK017",
+    "fuel": 90,
+    "load": 73,
+    "speed": 29,
+    "signal": 89,
+    "latency": 28,
+    "battery": 83,
+    "status": "active"
+  },
+  {
+    "_id": "TRK018",
+    "name": "TRK018",
+    "fuel": 76,
+    "load": 75,
+    "speed": 27,
+    "signal": 95,
+    "latency": 26,
+    "battery": 84,
+    "status": "active"
+  },
+  {
+    "_id": "TRK019",
+    "name": "TRK019",
+    "fuel": 98,
+    "load": 36,
+    "speed": 27,
+    "signal": 86,
+    "latency": 18,
+    "battery": 85,
+    "status": "active"
+  },
+  {
+    "_id": "TRK020",
+    "name": "TRK020",
+    "fuel": 81,
+    "load": 16,
+    "speed": 30,
+    "signal": 97,
+    "latency": 26,
+    "battery": 99,
+    "status": "active"
+  }
+]

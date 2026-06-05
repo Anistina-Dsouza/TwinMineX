@@ -1,0 +1,30 @@
+[
+  {
+    "_id": "TWR001",
+    "x": 100,
+    "z": 100,
+    "coverageRadius": 300,
+    "status": "healthy"
+  },
+  {
+    "_id": "TWR002",
+    "x": 900,
+    "z": 100,
+    "coverageRadius": 300,
+    "status": "healthy"
+  },
+  {
+    "_id": "TWR003",
+    "x": 100,
+    "z": 900,
+    "coverageRadius": 300,
+    "status": "healthy"
+  },
+  {
+    "_id": "TWR004",
+    "x": 900,
+    "z": 900,
+    "coverageRadius": 300,
+    "status": "healthy"
+  }
+]

@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Exo+2:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg-root:        #0a0f1a;
+  --bg-topbar:      #0d1422;
+  --bg-sidebar:     #0d1422;
+  --bg-card:        #131d2e;
+  --bg-card-hover:  #182338;
+  --bg-scene:       #080e18;
+
+  --border:         rgba(255,255,255,0.07);
+  --border-cyan:    rgba(0,210,200,0.35);
+  --border-active:  rgba(0,210,200,0.6);
+
+  --cyan:           #00d2c8;
+  --cyan-dim:       rgba(0,210,200,0.5);
+  --cyan-glow:      rgba(0,210,200,0.12);
+  --green:          #3ddc84;
+  --amber:          #f5a623;
+  --red:            #ff4560;
+  --blue-light:     #4fc3f7;
+
+  --text-primary:   rgba(255,255,255,0.9);
+  --text-secondary: rgba(255,255,255,0.42);
+  --text-label:     rgba(0,210,200,0.65);
+
+  --font-hud:   'Rajdhani', sans-serif;
+  --font-mono:  'Share Tech Mono', monospace;
+  --font-body:  'Exo 2', sans-serif;
+
+  --topbar-h:     54px;
+  --statusbar-h:  40px;
+  --sidebar-w:    270px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%; width: 100%;
+  overflow: hidden;
+  background: var(--bg-root);
+  font-family: var(--font-body);
+  color: var(--text-primary);
+}
+
+body {
+  background-image: radial-gradient(rgba(0,210,200,0.035) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,210,200,0.18); border-radius: 2px; }
+
+@keyframes pulse-dot {
+  0%,100% { box-shadow: 0 0 0 0 rgba(61,220,132,0.7); }
+  50%     { box-shadow: 0 0 0 5px rgba(61,220,132,0); }
+}
+@keyframes slide-in {
+  from { opacity:0; transform:translateX(-10px); }
+  to   { opacity:1; transform:translateX(0); }
+}
+@keyframes fade-up {
+  from { opacity:0; transform:translateY(8px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+@keyframes tower-blink {
+  0%,100% { opacity:1; }
+  50%     { opacity:0.25; }
+}
