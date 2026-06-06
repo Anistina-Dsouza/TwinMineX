@@ -74,7 +74,10 @@ TwinMineX/
 │   │   └── routes.json
 │   │
 │   ├── scripts/
-│   ├── .env
+│   |   ├──generateTelemetry
+│   |   ├── importMongo.js
+│   |   └── normalizeRoutes.js
+│   |   └── parseGeolife.js
 │   ├── package.json
 │   ├── package-lock.json
 │   └── server.js
@@ -100,8 +103,10 @@ TwinMineX/
 │   │   ├── App.css
 │   │   ├── MineScene.js
 │   │   ├── heatmap.js
+│   │   ├── MapdData.js
+│   │   ├── MineScene.js
 │   │   ├── index.css
-│   │   └── main.js
+│   │   └── main.jsx
 │   │
 │   ├── index.html
 │   ├── package.json
@@ -184,7 +189,3 @@ http://localhost:5173
 MSc IT Student | Digital Twin & Smart Mining Enthusiast
 
 ---
-
-## 📜 License
-
-This project is licensed under the MIT License.
