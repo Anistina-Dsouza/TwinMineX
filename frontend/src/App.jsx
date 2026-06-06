@@ -88,6 +88,8 @@ export default function App() {
 
         requestAnimationFrame(() => {
           if (mountRef.current) {
+            console.log("ROUTES FROM API:");
+            console.log(rRes.data);
             sceneRef.current = createScene(
               mountRef.current,
               towersWithId,

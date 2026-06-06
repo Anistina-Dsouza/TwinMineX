@@ -1,4 +1,12 @@
 import * as THREE from "three";
+import {
+  NODES,
+  EDGES,
+  LOAD_ZONES,
+  DUMP_ZONES,
+  FUEL_ZONES,
+  HUB_NODES
+} from "./mapData";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { createHeatmapOverlay } from "./heatmap";
 
@@ -48,17 +56,21 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
     new THREE.MeshStandardMaterial({ color: 0x1a2a1a, roughness: 0.95, metalness: 0.05 })
   );
   ground.rotation.x = -Math.PI / 2;
-  ground.position.set(500, 0, 500);
+  ground.position.set(0, 0, 0);
   scene.add(ground);
 
   const grid = new THREE.GridHelper(1000, 50, 0x004455, 0x002233);
   grid.position.set(500, 0.5, 500);
-  scene.add(grid);
+  // scene.add(grid);
 
   // =========================
   // HEATMAP OVERLAY
   // =========================
-  const heatmap = createHeatmapOverlay(scene, 1000, { x: 500, z: 500 });
+  const heatmap = createHeatmapOverlay(
+  scene,
+  1400,
+  { x: 0, z: 0 }
+  );
 
   // =========================
   // LIGHTS
@@ -74,32 +86,8 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
   rimLight.position.set(100, 150, 100);
   scene.add(rimLight);
 
-  // =========================
-  // ZONES
-  // =========================
-  function createZone(x, z, color, size, emissive) {
-    const mat = new THREE.MeshStandardMaterial({ color, emissive: emissive ?? color, emissiveIntensity: 0.2, roughness: 0.7 });
-    const zone = new THREE.Mesh(new THREE.CylinderGeometry(size, size, 6, 32), mat);
-    zone.position.set(x, 3, z);
-    scene.add(zone);
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(size + 2, size + 8, 64),
-      new THREE.MeshBasicMaterial({ color: emissive ?? color, transparent: true, opacity: 0.25, side: THREE.DoubleSide })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x, 1, z);
-    scene.add(ring);
-  }
-
-  const pitA          = { x: 250, z: 250 };
-  const pitB          = { x: 750, z: 250 };
-  const dumpSite      = { x: 500, z: 750 };
-  const controlCenter = { x: 500, z: 100 };
-
-  createZone(pitA.x,          pitA.z,          0x7a3b10, 80,  0xff6600);
-  createZone(pitB.x,          pitB.z,          0x7a3b10, 80,  0xff6600);
-  createZone(dumpSite.x,      dumpSite.z,      0x444455, 100, 0x8888ff);
-  createZone(controlCenter.x, controlCenter.z, 0x003388, 60,  0x0088ff);
+  createRoadNetwork(scene); //calling roadnetwork
+  createNodes(scene);
 
   // =========================
   // ROADS
@@ -122,10 +110,10 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
     line.rotation.y = road.rotation.y;
     scene.add(line);
   }
-
-  createRoad(pitA.x, pitA.z, dumpSite.x, dumpSite.z);
-  createRoad(pitB.x, pitB.z, dumpSite.x, dumpSite.z);
-  createRoad(controlCenter.x, controlCenter.z, dumpSite.x, dumpSite.z);
+/**fake roads commented out */
+  // createRoad(pitA.x, pitA.z, dumpSite.x, dumpSite.z);
+  // createRoad(pitB.x, pitB.z, dumpSite.x, dumpSite.z);
+  // createRoad(controlCenter.x, controlCenter.z, dumpSite.x, dumpSite.z);
 
   // =========================
   // TOWERS
@@ -167,6 +155,70 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
     scene.add(covRing);
   });
 
+
+  function createRoadNetwork(scene) {
+
+  EDGES.forEach(([a, b]) => {
+
+    const start = NODES[a];
+    const end = NODES[b];
+
+    if (!start || !end) return;
+
+    const points = [
+      new THREE.Vector3(
+        start.x,
+        1,
+        start.z
+      ),
+
+      new THREE.Vector3(
+        end.x,
+        1,
+        end.z
+      )
+    ];
+
+    const geometry =
+      new THREE.BufferGeometry()
+        .setFromPoints(points);
+
+    const line =
+      new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({
+          color: 0x00ffff
+        })
+      );
+
+    scene.add(line);
+
+  });
+
+  }
+
+  function createNodes(scene) {
+
+  Object.values(NODES).forEach((node) => {
+
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(2.5, 8, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff
+      })
+    );
+
+    dot.position.set(
+      node.x,
+      2,
+      node.z
+    );
+
+    scene.add(dot);
+
+  });
+
+  }
   // =========================
   // LABEL
   // =========================
@@ -223,12 +275,29 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
         wheel.position.set(x, 5, z); truck.add(wheel);
       }
     }
+    console.log(route);
+    console.log(route.loadZone);
+    console.log(NODES[route.loadZone]);
 
-    const sourcePit = index < routes.length / 2 ? pitA : pitB;
+
+    console.log("Route:", route);
+    console.log("LoadZone:", route.loadZone);
+
+    if (!route.points || route.points.length === 0) {
+      console.error("No points for route", route);
+      return;
+    }
+
+    const firstPoint = route.points[0];
+
+    console.log("First Point:", firstPoint);
+
     truck.position.set(
-      sourcePit.x + (Math.random() * 100 - 50), 8,
-      sourcePit.z + (Math.random() * 100 - 50)
+      firstPoint.x,
+      8,
+      firstPoint.y
     );
+
     truck.userData.type = "truck";
 
     const label = createLabel(`TRK${String(index + 1).padStart(3, "0")}`);
@@ -238,15 +307,15 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
 
     truckObjects.push({
       mesh: truck,
-      id: `TRK${String(index + 1).padStart(3, "0")}`,
-      speed:   Math.floor(25 + Math.random() * 20),
-      signal:  Math.floor(60 + Math.random() * 40),
-      fuel:    Math.floor(60 + Math.random() * 40),
+      id: route.truckId || `TRK${index + 1}`,
+      routePoints: route.points,
+      pointIndex: 0,
+
+      speed: Math.floor(25 + Math.random() * 20),
+      signal: Math.floor(60 + Math.random() * 40),
+      fuel: Math.floor(60 + Math.random() * 40),
       battery: Math.floor(70 + Math.random() * 30),
       latency: Math.floor(10 + Math.random() * 20),
-      start: sourcePit,
-      progress: Math.random(),
-      returning: false,
     });
   });
 
@@ -295,15 +364,24 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
     frame++;
 
     truckObjects.forEach(truck => {
-      truck.progress += 0.0015;
-      if (truck.progress >= 1) { truck.progress = 0; truck.returning = !truck.returning; }
-      const from = truck.returning ? dumpSite : truck.start;
-      const to   = truck.returning ? truck.start : dumpSite;
-      truck.mesh.position.x = from.x + (to.x - from.x) * truck.progress;
-      truck.mesh.position.z = from.z + (to.z - from.z) * truck.progress;
-      truck.mesh.rotation.y = Math.atan2(to.x - from.x, to.z - from.z);
-    });
 
+      const pts = truck.routePoints;
+
+      if (!pts || pts.length === 0) return;
+
+      truck.pointIndex =
+        (truck.pointIndex + 1) % pts.length;
+
+      const p = pts[truck.pointIndex];
+
+      truck.mesh.position.set(
+        p.x,
+        8,
+        p.y
+      );
+
+    });
+    
     // Update heatmap every 60 frames
     if (frame % 60 === 0) heatmap.update(truckObjects);
 
@@ -338,716 +416,3 @@ export function createScene(container, towers, routes, onTruckSelect, onSceneRea
     },
   };
 }
-
-
-// import * as THREE from "three";
-// import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-
-// export function createScene(container, towers, routes) {
-
-//   const scene = new THREE.Scene();
-  
-//   scene.background = new THREE.Color(0x101820);
-   
-//    const infoPanel =document.createElement("div");
-
-//   infoPanel.style.position = "absolute";
-//   infoPanel.style.top = "20px";
-//   infoPanel.style.right = "20px";
-
-//   infoPanel.style.background =
-//     "rgba(0,0,0,0.8)";
-
-//   infoPanel.style.color = "white";
-
-//   infoPanel.style.padding = "15px";
-
-//   infoPanel.style.borderRadius = "8px";
-
-//   infoPanel.style.minWidth = "220px";
-
-//   infoPanel.style.display = "none";
-
-//   document.body.appendChild(
-//     infoPanel
-//   );
-
-//   const raycaster =
-//   new THREE.Raycaster();
-
-//   const mouse =
-//   new THREE.Vector2();
-
-//   let selectedTruck = null;
- 
-//   // =========================
-//   // CAMERA
-//   // =========================
-
-//   const camera = new THREE.PerspectiveCamera(
-//     75,
-//     container.clientWidth / container.clientHeight,
-//     0.1,
-//     5000
-//   );
-
-//   camera.position.set(
-//   600,
-//   500,
-//   600
-//   );
-
-//   // =========================
-//   // RENDERER
-//   // =========================
-
-//   const renderer = new THREE.WebGLRenderer({
-//     antialias: true,
-//   });
-
-//   renderer.setSize(
-//     container.clientWidth,
-//     container.clientHeight
-//   );
-
-//   container.appendChild(renderer.domElement);
-
-//   // =========================
-//   // CONTROLS
-//   // =========================
-
-//   const controls = new OrbitControls(
-//     camera,
-//     renderer.domElement
-//   );
-
-//   controls.enableDamping = true;
-
-//   controls.target.set(
-//   500,
-//   0,
-//   500
-//   );
-
-//   controls.minDistance = 300;
-//   controls.maxDistance = 2000;
-
-//   controls.minPolarAngle = Math.PI / 4;
-//   controls.maxPolarAngle = Math.PI / 2.3;
-
-//   controls.update();
-
-//   controls.maxPolarAngle =
-//   Math.PI / 2.3;
-
-// controls.minPolarAngle =
-//   Math.PI / 4;
-
-// // =========================
-//   // GROUND
-//   // =========================
-
-//   const ground = new THREE.Mesh(
-//     new THREE.PlaneGeometry(1000, 1000),
-//     new THREE.MeshStandardMaterial({
-//       color: 0x555555,
-//     })
-//   );
-
-//   ground.rotation.x = -Math.PI / 2;
-//   ground.position.set(500,0,500);
-//   scene.add(ground);
-
-//   // =========================
-//   // GRID
-//   // =========================
-
-//   const grid = new THREE.GridHelper(
-//     1000,
-//     50
-//   );
-
-//   grid.position.set(500,0,500);
-
-//   scene.add(grid);
-
-//   // =========================
-//   // LIGHTS
-//   // =========================
-
-//   const ambient = new THREE.AmbientLight(
-//     0xffffff,
-//     1
-//   );
-
-//   scene.add(ambient);
-
-//   const directional = new THREE.DirectionalLight(
-//     0xffffff,
-//     3
-//   );
-
-//   directional.position.set(
-//     200,
-//     300,
-//     200
-//   );
-
-//   scene.add(directional);
-
-//   // =========================
-//   // MINE LAYOUT
-//   // =========================
-
-//   const pitA = {
-//     x: 250,
-//     z: 250
-//   };
-
-//   const pitB = {
-//     x: 750,
-//     z: 250
-//   };
-
-//   const dumpSite = {
-//     x: 500,
-//     z: 750
-//   };
-
-//   const controlCenter = {
-//     x: 500,
-//     z: 100
-//   };
-
-//   function createZone(
-//     x,
-//     z,
-//     color,
-//     size
-//   ) {
-//     const zone = new THREE.Mesh(
-//       new THREE.CylinderGeometry(
-//         size,
-//         size,
-//         5,
-//         32
-//       ),
-//       new THREE.MeshStandardMaterial({
-//         color,
-//       })
-//     );
-
-//     zone.position.set(
-//       x,
-//       2,
-//       z
-//     );
-
-//     scene.add(zone);
-//   }
-
-//   createZone(
-//     pitA.x,
-//     pitA.z,
-//     0x8B4513,
-//     80
-//   );
-
-//   createZone(
-//     pitB.x,
-//     pitB.z,
-//     0x8B4513,
-//     80
-//   );
-
-//   createZone(
-//     dumpSite.x,
-//     dumpSite.z,
-//     0x666666,
-//     100
-//   );
-
-//   createZone(
-//     controlCenter.x,
-//     controlCenter.z,
-//     0x0000ff,
-//     60
-//   );
-
-//   // =========================
-//   // ROADS
-//   // =========================
-
-//   function createRoad(
-//     startX,
-//     startZ,
-//     endX,
-//     endZ
-//   ) {
-
-//     const dx = endX - startX;
-//     const dz = endZ - startZ;
-
-//     const length = Math.sqrt(
-//       dx * dx + dz * dz
-//     );
-
-//     const road = new THREE.Mesh(
-//       new THREE.BoxGeometry(
-//         length,
-//         1,
-//         20
-//       ),
-//       new THREE.MeshStandardMaterial({
-//         color: 0x333333
-//       })
-//     );
-
-//     road.position.set(
-//       (startX + endX) / 2,
-//       0.5,
-//       (startZ + endZ) / 2
-//     );
-
-//     road.rotation.y =
-//       Math.atan2(dz, dx);
-
-//     scene.add(road);
-//   }
-
-//   createRoad(
-//     pitA.x,
-//     pitA.z,
-//     dumpSite.x,
-//     dumpSite.z
-//   );
-
-//   createRoad(
-//     pitB.x,
-//     pitB.z,
-//     dumpSite.x,
-//     dumpSite.z
-//   );
-
-//   createRoad(
-//     controlCenter.x,
-//     controlCenter.z,
-//     dumpSite.x,
-//     dumpSite.z
-//   );
-
-
-//   // =========================
-//   // TOWERS
-//   // =========================
-
-//   towers.forEach((towerData) => {
-
-//     const tower = new THREE.Mesh(
-//       new THREE.CylinderGeometry(
-//         5,
-//         5,
-//         100
-//       ),
-//       new THREE.MeshStandardMaterial({
-//         color: 0x00ff00,
-//       })
-//     );
-
-//     tower.position.set(
-//       towerData.x,
-//       50,
-//       towerData.z
-//     );
-
-//     scene.add(tower);
-
-//     const coverage = new THREE.Mesh(
-//       new THREE.CircleGeometry(
-//         towerData.coverageRadius,
-//         64
-//       ),
-//       new THREE.MeshBasicMaterial({
-//         color: 0x00ff00,
-//         transparent: true,
-//         opacity: 0.15,
-//         side: THREE.DoubleSide,
-//       })
-//     );
-
-//     coverage.rotation.x =
-//       -Math.PI / 2;
-
-//     coverage.position.set(
-//       towerData.x,
-//       0.2,
-//       towerData.z
-//     );
-
-//     scene.add(coverage);
-
-//   });
-
-//   function createLabel(text) {
-
-//   const canvas =
-//     document.createElement("canvas");
-
-//   const context =
-//     canvas.getContext("2d");
-
-//   canvas.width = 256;
-//   canvas.height = 64;
-
-//   context.fillStyle = "#00ffff";
-//   context.font = "28px Arial";
-//   context.fillText(text, 10, 40);
-
-//   const texture =
-//     new THREE.CanvasTexture(canvas);
-
-//   const material =
-//     new THREE.SpriteMaterial({
-//       map: texture,
-//       transparent: true
-//     });
-
-//   const sprite =
-//     new THREE.Sprite(material);
-
-//   sprite.scale.set(
-//     60,
-//     15,
-//     1
-//   );
-
-//   return sprite;
-// }
-
-//   // =========================
-//   // TRUCKS
-//   // =========================
-
-//   const truckObjects = [];
-
-//   routes.forEach((route, index) => {
-
-//     const truck = new THREE.Group();
-
-//   // Body
-//   const body = new THREE.Mesh(
-//     new THREE.BoxGeometry(40, 15, 20),
-//     new THREE.MeshStandardMaterial({
-//       color: 0xffa500
-//     })
-//   );
-
-//   body.position.y = 10;
-//   truck.add(body);
-
-//   // Cabin
-//   const cabin = new THREE.Mesh(
-//     new THREE.BoxGeometry(15, 12, 18),
-//     new THREE.MeshStandardMaterial({
-//       color: 0xffff00
-//     })
-//   );
-
-//   cabin.position.set(-10, 20, 0);
-//   truck.add(cabin);
-
-//   // Wheels
-//   for (let x of [-15, 15]) {
-//     for (let z of [-12, 12]) {
-
-//       const wheel = new THREE.Mesh(
-//         new THREE.CylinderGeometry(
-//           5,
-//           5,
-//           4,
-//           16
-//         ),
-//         new THREE.MeshStandardMaterial({
-//           color: 0x222222
-//         })
-//       );
-
-//       wheel.rotation.z =
-//         Math.PI / 2;
-
-//       wheel.position.set(
-//         x,
-//         5,
-//         z
-//       );
-
-//       truck.add(wheel);
-//     }
-//   }
-
-//     const sourcePit =
-//       index < routes.length / 2
-//         ? pitA
-//         : pitB;
-
-//     truck.position.set(
-//       sourcePit.x +
-//       (Math.random() * 120 - 60),
-
-//       10,
-
-//       sourcePit.z +
-//       (Math.random() * 120 - 60)
-//     );
-
-//     scene.add(truck);
-
-//     truck.userData = {
-//     type: "truck"
-//     };
-
-//     const label = createLabel(
-//   `TRK${String(index + 1).padStart(3, "0")}`
-//     );
-
-// label.position.set(
-//   0,
-//   40,
-//   0
-// );
-
-// truck.add(label);
-
-//    truckObjects.push({
-//   mesh: truck,
-
-//   id: `TRK${String(index + 1).padStart(3, "0")}`,
-
-//   speed: Math.floor(
-//     25 + Math.random() * 20
-//   ),
-
-//   signal: Math.floor(
-//     60 + Math.random() * 40
-//   ),
-
-//   fuel: Math.floor(
-//     60 + Math.random() * 40
-//   ),
-
-//   battery: Math.floor(
-//     70 + Math.random() * 30
-//   ),
-
-//   latency: Math.floor(
-//     10 + Math.random() * 20
-//   ),
-
-//   start: sourcePit,
-//   target: dumpSite,
-//   progress: Math.random(),
-//   returning: false
-// });
-
-//   });
-
-//   function onMouseClick(event) {
-
-//   mouse.x =
-//     (event.clientX /
-//       window.innerWidth) *
-//       2 - 1;
-
-//   mouse.y =
-//     -(event.clientY /
-//       window.innerHeight) *
-//       2 + 1;
-
-//   raycaster.setFromCamera(
-//     mouse,
-//     camera
-//   );
-
-//   const truckMeshes =
-//     truckObjects.map(
-//       truck => truck.mesh
-//     );
-
-//   const intersects =
-//     raycaster.intersectObjects(
-//       truckMeshes,
-//       true
-//     );
-
-//   if (
-//     intersects.length > 0
-//   ) {
-
-//     const clickedMesh =
-//       intersects[0].object;
-
-//     const clickedTruck =
-//       truckObjects.find(
-//         truck =>
-//           truck.mesh === clickedMesh ||
-//           truck.mesh.children.includes(
-//             clickedMesh
-//           )
-//       );
-
-//     if (clickedTruck) {
-
-//        // Reset all trucks
-
-//       truckObjects.forEach((truck) => {
-
-//     truck.mesh.traverse((child) => {
-
-//     if (child.isMesh) {
-
-//       child.material.emissive =
-//         new THREE.Color(0x000000);
-
-//       child.material.emissiveIntensity = 0;
-
-//         }
-
-//        });
-
-//       });
-
-//       // Highlight selected truck
-
-//       clickedTruck.mesh.traverse((child) => {
-
-//       if (child.isMesh) {
-
-//         child.material.emissive =
-//           new THREE.Color(0xffff00);
-
-//         child.material.emissiveIntensity = 0.8;
-
-//       }
-
-//      });
-
-//       selectedTruck = clickedTruck;
-
-//       infoPanel.style.display =
-//         "block";
-
-//       infoPanel.innerHTML = `
-//         <h3>${clickedTruck.id}</h3>
-
-//         Speed:
-//         ${clickedTruck.speed} km/h
-//         <br>
-
-//         Signal:
-//         ${clickedTruck.signal}%
-//         <br>
-
-//         Fuel:
-//         ${clickedTruck.fuel}%
-//         <br>
-
-//         Battery:
-//         ${clickedTruck.battery}%
-//         <br>
-
-//         Latency:
-//         ${clickedTruck.latency} ms
-//       `;
-//     }
-//   }
-// }
-
-//   // =========================
-//   // ANIMATION
-//   // =========================
-
-//   function animate() {
-
-//     requestAnimationFrame(
-//       animate
-//     );
-
-//     truckObjects.forEach((truck) => {
-
-//   truck.progress += 0.0015;
-
-//   if (truck.progress >= 1) {
-
-//     truck.progress = 0;
-
-//     truck.returning =
-//       !truck.returning;
-
-//   }
-
-//   let from;
-//   let to;
-
-//   if (!truck.returning) {
-
-//     from = truck.start;
-//     to = dumpSite;
-
-//   } else {
-
-//     from = dumpSite;
-//     to = truck.start;
-
-//   }
-
-//   truck.mesh.position.x =
-//     from.x +
-//     (to.x - from.x) *
-//     truck.progress;
-
-//   truck.mesh.position.z =
-//     from.z +
-//     (to.z - from.z) *
-//     truck.progress;
-
-// });
-
-//     controls.update();
-
-//     renderer.render(
-//       scene,
-//       camera
-//     );
-
-//   }
-
-//   window.addEventListener(
-//   "click",
-//   onMouseClick
-//   );
-//   animate();
-
-//   const handleResize = () => {
-//   if (!container) return;
-//   const w = container.clientWidth;
-//   const h = container.clientHeight;
-//   camera.aspect = w / h;
-//   camera.updateProjectionMatrix();
-//   renderer.setSize(w, h);
-// };
- 
-// window.addEventListener("resize", handleResize);
-
-//   return {
-//   scene,
-//   camera,
-//   renderer,
-//   cleanup: () => {
-//     window.removeEventListener("resize", handleResize);
-//     window.removeEventListener("click", onMouseClick);
-//     renderer.dispose();
-//     container.removeChild(renderer.domElement);
-//   },
-// };
-
-// }
