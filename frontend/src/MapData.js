@@ -104,7 +104,7 @@ const PIT_CENTERS = [
   { x:  150, y:  700 }, // s  pits
 ];
 
-function getZ(rx, ry) {
+export function getZ(rx, ry) {
   let base = 0.02 * rx + 0.015 * ry
            + 20 * Math.sin(rx / 200)
            + 15 * Math.cos(ry / 150);
@@ -118,12 +118,7 @@ function getZ(rx, ry) {
 // ── Build NODES ───────────────────────────────────────────────────────
 export const NODES = {};
 for (const [name, value] of Object.entries(_RAW)) {
-//   const wx = rx - OX;
-//   const wy = ry - OY;
-//   NODES[name] = {
-//     x: wx,
-//     y: getZ(rx, ry) * 0.04,  // subtle terrain height
-//     z: wy,
+
      console.log(name, value);
 
   if (!Array.isArray(value)) {
@@ -132,6 +127,12 @@ for (const [name, value] of Object.entries(_RAW)) {
   }
 
   const [rx, ry] = value;
+
+  console.log(
+    name,
+    "height:",
+    getZ(rx, ry)
+  );
 
   const wx = rx - OX;
   const wy = ry - OY;
