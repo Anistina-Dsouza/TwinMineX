@@ -419,6 +419,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { VRButton } from "three/addons/webxr/VRButton.js";
 import {
   NODES, EDGES, LOAD_ZONES, DUMP_ZONES, FUEL_ZONES,
   HUB_NODES, WORLD_BOUNDS, getTruckRoutes, findPath
@@ -581,7 +582,7 @@ function scalePolygon(points, scale) {
 /* ═══════════════════════════════════════════════════════════
    MAIN createScene
 ═══════════════════════════════════════════════════════════ */
-export function createScene(container, apiTowers, onTruckSelect) {
+export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
 
   console.log("createScene started");
   console.log("NODES:", Object.keys(NODES).length);
@@ -610,7 +611,16 @@ export function createScene(container, apiTowers, onTruckSelect) {
   renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
   renderer.toneMapping       = THREE.ReinhardToneMapping;
   renderer.toneMappingExposure = 1.4;   // brighter overall
+  renderer.xr.enabled = true;
   container.appendChild(renderer.domElement);
+
+  const vrButton = VRButton.createButton(renderer);
+  vrButton.style.position = "absolute";
+  vrButton.style.bottom = "14px";
+  vrButton.style.left = "50%";
+  vrButton.style.transform = "translateX(-50%)";
+  vrButton.style.zIndex = "100";
+  container.appendChild(vrButton);
 
   /* ── Controls ── */
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -818,57 +828,60 @@ export function createScene(container, apiTowers, onTruckSelect) {
   const matPitOutline = new THREE.LineBasicMaterial({ color: C.pitOutline, linewidth: 2 });
 
   for (const nodeNames of Object.values(pitGroups)) {
-
-    
-    const pts =
-      nodeNames
-        .map(n => NODES[n])
-        .filter(Boolean);
-        console.log("Pit:", pts.map(p => ({
-          x: p.x,
-          y: p.y,
-          z: p.z
-        })));
+    const pts = nodeNames.map(n => NODES[n]).filter(Boolean);
     if (pts.length < 3) continue;
-    
-    for (let level = 0; level < 6; level++) {
-  
-      const scale =
-        1 - level * 0.12;
-  
-      const depth =
-        level * 25;
-  
-      const poly =
-        scalePolygon(pts, scale);
-  
-      const shape =
-        new THREE.Shape(
-          poly.map(
-            p => new THREE.Vector2(p.x, p.z)
-          )
-        );
-  
-      const geo =
-        new THREE.ShapeGeometry(shape);
-  
-      const mesh =
-        new THREE.Mesh(
-          geo,
-          new THREE.MeshStandardMaterial({
-            color:
-              level % 2
-                ? 0x3b3125
-                : 0x4c4030
-          })
-        );
-  
-      mesh.rotation.x =
-        -Math.PI / 2;
-  
-      mesh.position.y =
-        -depth;
-  
+
+    const centerX = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+    const centerZ = pts.reduce((s, p) => s + p.z, 0) / pts.length;
+
+    const levels = 6;
+    const depthPerLevel = 3.0; // total depth 18.0 units, matches truck node depth of ~12-15 units
+    const maxContraction = 0.45; // 45% contraction at the bottom
+
+    for (let i = 0; i < levels; i++) {
+      const scaleOuter = 1 - (i / levels) * maxContraction;
+      const scaleInner = 1 - ((i + 1) / levels) * maxContraction;
+
+      const outerPts = pts.map(p => new THREE.Vector2(
+        centerX + (p.x - centerX) * scaleOuter,
+        centerZ + (p.z - centerZ) * scaleOuter
+      ));
+
+      const innerPts = pts.map(p => new THREE.Vector2(
+        centerX + (p.x - centerX) * scaleInner,
+        centerZ + (p.z - centerZ) * scaleInner
+      ));
+
+      const levelShape = new THREE.Shape(outerPts);
+      
+      // If not the bottom floor, make it hollow by adding the inner path as a hole
+      if (i < levels - 1) {
+        const holePath = new THREE.Path(innerPts);
+        levelShape.holes.push(holePath);
+      }
+
+      const geom = new THREE.ExtrudeGeometry(levelShape, {
+        depth: depthPerLevel,
+        bevelEnabled: false
+      });
+
+      // Vary color by depth for visual gradient (darker at bottom)
+      const depthColor = new THREE.Color(0x3c2a18).multiplyScalar(1 - (i / levels) * 0.4);
+
+      const mesh = new THREE.Mesh(
+        geom,
+        new THREE.MeshStandardMaterial({
+          color: depthColor,
+          roughness: 0.95,
+          metalness: 0.05,
+          side: THREE.DoubleSide
+        })
+      );
+
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.y = -(i * depthPerLevel) - 0.2; // slight downward offset to prevent z-fighting with terrain
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
       scene.add(mesh);
     }
   }

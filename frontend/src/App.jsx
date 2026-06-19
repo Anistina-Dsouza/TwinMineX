@@ -32,6 +32,64 @@ export default function App() {
     if (trucks.length > 0) setAlerts(generateAlerts(trucks));
   }, [trucks]);
 
+  // Update telemetry dynamically every 2 seconds to make the digital twin dynamic and real-time
+  useEffect(() => {
+    if (trucks.length === 0) return;
+    const interval = setInterval(() => {
+      setTrucks(prevTrucks => {
+        const updated = prevTrucks.map(t => {
+          // Slow fuel decay
+          let newFuel = t.fuel - (Math.random() > 0.7 ? 1 : 0);
+          if (newFuel <= 5) newFuel = 100; // refuel when empty
+
+          // Signal strength fluctuations
+          let newSignal = t.signal + (Math.random() > 0.5 ? 2 : -2);
+          newSignal = Math.max(30, Math.min(100, newSignal));
+
+          // Battery fluctuations
+          let newBattery = t.battery + (Math.random() > 0.5 ? 1 : -1);
+          newBattery = Math.max(50, Math.min(100, newBattery));
+
+          // Speed fluctuations
+          let newSpeed = (t.speed ?? 30) + Math.floor(Math.random() * 5) - 2;
+          newSpeed = Math.max(10, Math.min(50, newSpeed));
+
+          // Latency fluctuations
+          let newLatency = (t.latency ?? 15) + Math.floor(Math.random() * 3) - 1;
+          newLatency = Math.max(5, Math.min(40, newLatency));
+
+          return {
+            ...t,
+            fuel: newFuel,
+            signal: newSignal,
+            battery: newBattery,
+            speed: newSpeed,
+            latency: newLatency,
+          };
+        });
+
+        // Sync to Three.js scene
+        sceneRef.current?.updateTruckTelemetry?.(updated);
+
+        return updated;
+      });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [trucks.length]);
+
+  // Sync selectedData when trucks telemetry updates
+  useEffect(() => {
+    if (selectedType === "truck" && selectedTruckId) {
+      const t = trucks.find(t => t._id === selectedTruckId);
+      if (t) {
+        setSelectedData({
+          id: t._id, signal: t.signal, fuel: t.fuel,
+          battery: t.battery, speed: t.speed ?? 30, latency: t.latency ?? 15,
+        });
+      }
+    }
+  }, [trucks, selectedType, selectedTruckId]);
+
   const clearSelection = useCallback(() => {
     setSelectedType(null); setSelectedData(null);
     setSelectedTruckId(null); setSelectedTowerId(null);
@@ -99,7 +157,37 @@ export default function App() {
           }
         });
       } catch (e) {
-        console.error(e);
+        console.warn("Backend API offline, falling back to mock data:", e);
+        const mockTowers = [
+          { _id: "TWR001", x: 100, z: 100, coverageRadius: 300, status: "healthy" },
+          { _id: "TWR002", x: 900, z: 100, coverageRadius: 300, status: "healthy" },
+          { _id: "TWR003", x: 100, z: 900, coverageRadius: 300, status: "healthy" },
+          { _id: "TWR004", x: 900, z: 900, coverageRadius: 300, status: "healthy" }
+        ];
+        const mockTrucks = Array.from({ length: 20 }, (_, i) => ({
+          _id: `TRK${String(i + 1).padStart(3, "0")}`,
+          name: `TRK${String(i + 1).padStart(3, "0")}`,
+          fuel: Math.floor(Math.random() * 40) + 60,
+          load: Math.floor(Math.random() * 100),
+          speed: Math.floor(Math.random() * 25) + 20,
+          signal: Math.floor(Math.random() * 30) + 70,
+          latency: Math.floor(Math.random() * 20) + 10,
+          battery: Math.floor(Math.random() * 20) + 80,
+          status: "active"
+        }));
+        setTowers(mockTowers);
+        setTrucks(mockTrucks);
+
+        requestAnimationFrame(() => {
+          if (mountRef.current) {
+            sceneRef.current = createScene(
+              mountRef.current,
+              mockTowers,
+              [],
+              handleSceneTruckSelect,
+            );
+          }
+        });
       }
     }
     load();
