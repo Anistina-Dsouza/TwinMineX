@@ -137,9 +137,56 @@ for (const [name, value] of Object.entries(_RAW)) {
   const wx = rx - OX;
   const wy = ry - OY;
 
+  let yVal = getZ(rx, ry) * 0.04;
+  
+  // FW Pit adjustments
+  const fwDeep = [
+    "fw_pit_1_a", "fw_pit_1_b", "fw_pit_1_c", "fw_pit_1_d", "fw_pit_1_e", "fw_pit_1_f", "fw_pit_1_g",
+    "fw_load_spur_1", "fw_load_spur_2", "fw_load_spur_3", "fw_load_spur_4",
+    "load_zone_4", "load_zone_5", "load_zone_6", "load_zone_7"
+  ];
+  const fwMid = [
+    "fw_pit_2_a", "fw_pit_2_b", "fw_pit_2_c", "fw_pit_2_d", "fw_pit_2_e", "fw_pit_2_f", "fw_pit_2_g",
+    "fw_load_spur_5", "fw_load_spur_6", "fw_load_spur_7", "fw_load_spur_8",
+    "load_zone_8", "load_zone_9", "load_zone_10", "load_zone_11"
+  ];
+  
+  // North Pit adjustments
+  const nDeep = [
+    "n_q_1_a", "n_q_1_b", "n_q_1_c", "n_q_1_d", "n_q_1_e", "n_q_1_f",
+    "n_load_spur_1", "n_load_spur_2", "n_load_spur_3",
+    "load_zone_16", "load_zone_17", "load_zone_18"
+  ];
+  
+  // Northeast Pit adjustments
+  const neDeep = [
+    "ne_q_1_a", "ne_q_1_b", "ne_q_1_c", "ne_q_1_d", "ne_q_1_e", "ne_q_1_f",
+    "ne_load_spur_1", "ne_load_spur_2", "ne_load_spur_3",
+    "load_zone_24", "load_zone_25", "load_zone_26"
+  ];
+  
+  // South Pit adjustments
+  const sDeep = [
+    "s_sp_1_a", "s_sp_1_b", "s_sp_1_c", "s_sp_1_d", "s_sp_1_e", "s_sp_1_f",
+    "s_dump_spur_1", "s_dump_spur_2", "s_dump_spur_3",
+    "dump_zone_15", "dump_zone_16", "dump_zone_17"
+  ];
+
+  if (fwDeep.includes(name)) {
+    yVal = -70;
+  } else if (fwMid.includes(name)) {
+    yVal = -35;
+  } else if (nDeep.includes(name)) {
+    yVal = -65;
+  } else if (neDeep.includes(name)) {
+    yVal = -65;
+  } else if (sDeep.includes(name)) {
+    yVal = -65;
+  }
+
   NODES[name] = {
     x: wx,
-    y: getZ(rx, ry) * 0.04,
+    y: yVal,
     z: wy,
   };
 }

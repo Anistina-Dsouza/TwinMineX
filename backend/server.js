@@ -6,13 +6,14 @@ const { MongoClient } = require("mongodb");
 
 const app = express();
 
-app.use(cors());
-
 const client = new MongoClient(
   process.env.MONGO_URI
 );
 
 let db;
+
+app.use(cors());
+app.use(express.json());
 
 async function connectDB() {
   await client.connect();
@@ -47,6 +48,20 @@ app.get("/towers", async (req, res) => {
     .toArray();
 
   res.json(towers);
+});
+
+app.put("/towers/:id", async (req, res) => {
+  const { id } = req.params;
+  const { coverageRadius } = req.body;
+  try {
+    const result = await db.collection("towers").updateOne(
+      { _id: id },
+      { $set: { coverageRadius: Number(coverageRadius) } }
+    );
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 connectDB().then(() => {

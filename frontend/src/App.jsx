@@ -36,27 +36,31 @@ export default function App() {
   useEffect(() => {
     if (trucks.length === 0) return;
     const interval = setInterval(() => {
+      // 1. Update Trucks
       setTrucks(prevTrucks => {
+        const sceneTrucks = sceneRef.current?.getTruckObjects?.();
         const updated = prevTrucks.map(t => {
+          const st = sceneTrucks?.find(stObj => stObj.id === t._id);
+
           // Slow fuel decay
           let newFuel = t.fuel - (Math.random() > 0.7 ? 1 : 0);
           if (newFuel <= 5) newFuel = 100; // refuel when empty
 
-          // Signal strength fluctuations
-          let newSignal = t.signal + (Math.random() > 0.5 ? 2 : -2);
+          // Signal strength from 3D scene if available, otherwise fallback fluctuations
+          let newSignal = st ? st.signal : (t.signal + (Math.random() > 0.5 ? 2 : -2));
           newSignal = Math.max(30, Math.min(100, newSignal));
 
           // Battery fluctuations
           let newBattery = t.battery + (Math.random() > 0.5 ? 1 : -1);
           newBattery = Math.max(50, Math.min(100, newBattery));
 
-          // Speed fluctuations
-          let newSpeed = (t.speed ?? 30) + Math.floor(Math.random() * 5) - 2;
+          // Speed from 3D scene if available, otherwise fluctuations
+          let newSpeed = st ? st.speed : ((t.speed ?? 30) + Math.floor(Math.random() * 5) - 2);
           newSpeed = Math.max(10, Math.min(50, newSpeed));
 
-          // Latency fluctuations
-          let newLatency = (t.latency ?? 15) + Math.floor(Math.random() * 3) - 1;
-          newLatency = Math.max(5, Math.min(40, newLatency));
+          // Latency based on signal strength
+          let newLatency = st ? Math.round(10 + (100 - st.signal) * 0.4) : ((t.latency ?? 15) + Math.floor(Math.random() * 3) - 1);
+          newLatency = Math.max(5, Math.min(45, newLatency));
 
           return {
             ...t,
@@ -68,16 +72,29 @@ export default function App() {
           };
         });
 
-        // Sync to Three.js scene
-        sceneRef.current?.updateTruckTelemetry?.(updated);
-
         return updated;
+      });
+
+      // 2. Update Towers
+      setTowers(prevTowers => {
+        const sceneTowers = sceneRef.current?.getTowerObjects?.();
+        if (!sceneTowers) return prevTowers;
+        return prevTowers.map(t => {
+          const st = sceneTowers.find(stObj => stObj.id === t._id);
+          if (st) {
+            return {
+              ...t,
+              battery: st.battery,
+            };
+          }
+          return t;
+        });
       });
     }, 2000);
     return () => clearInterval(interval);
   }, [trucks.length]);
 
-  // Sync selectedData when trucks telemetry updates
+  // Sync selectedData when trucks or towers telemetry updates
   useEffect(() => {
     if (selectedType === "truck" && selectedTruckId) {
       const t = trucks.find(t => t._id === selectedTruckId);
@@ -87,8 +104,19 @@ export default function App() {
           battery: t.battery, speed: t.speed ?? 30, latency: t.latency ?? 15,
         });
       }
+    } else if (selectedType === "tower" && selectedTowerId) {
+      const t = towers.find(t => t._id === selectedTowerId);
+      if (t) {
+        setSelectedData({
+          id: t._id,
+          coverage: t.coverageRadius ?? 200,
+          x: Math.round(t.x),
+          z: Math.round(t.z),
+          battery: t.battery ?? 100
+        });
+      }
     }
-  }, [trucks, selectedType, selectedTruckId]);
+  }, [trucks, towers, selectedType, selectedTruckId, selectedTowerId]);
 
   const clearSelection = useCallback(() => {
     setSelectedType(null); setSelectedData(null);
@@ -123,6 +151,33 @@ export default function App() {
     setSelectedTruckId(null);
     setSelectedData({ id: t._id, coverage: t.coverageRadius ?? 200, x: Math.round(t.x), z: Math.round(t.z) });
   }, [towers]);
+
+  const handleTowerRadiusChange = useCallback(async (id, newRadius) => {
+    // 1. Update local state
+    setTowers(prevTowers => prevTowers.map(t => {
+      if (t._id === id) {
+        return { ...t, coverageRadius: newRadius };
+      }
+      return t;
+    }));
+
+    // 2. Update selectedData if the current tower is selected
+    if (selectedTowerId === id) {
+      setSelectedData(prevData => ({ ...prevData, coverage: newRadius }));
+    }
+
+    // 3. Update the Three.js scene
+    if (sceneRef.current && sceneRef.current.updateTowerRadius) {
+      sceneRef.current.updateTowerRadius(id, newRadius);
+    }
+
+    // 4. Send PUT request to backend to persist the changes
+    try {
+      await axios.put(`http://localhost:5000/towers/${id}`, { coverageRadius: newRadius });
+    } catch (error) {
+      console.error("Failed to update tower radius in database:", error);
+    }
+  }, [selectedTowerId]);
 
   const handleHeatmapToggle = () => {
     if (!sceneRef.current) return;
@@ -221,6 +276,7 @@ export default function App() {
           selectedTowerId={selectedTowerId}
           onTruckSelect={selectTruck}
           onTowerSelect={handleTowerSelect}
+          onTowerRadiusChange={handleTowerRadiusChange}
         />
 
         <main style={{ flex:1, position:"relative", background:"var(--bg-scene)", overflow:"hidden" }}>
@@ -235,7 +291,7 @@ export default function App() {
           {/* Top-right panel */}
           <div style={{ position:"absolute", top:"14px", right:"14px", zIndex:20 }}>
             {selectedData
-              ? <InfoPanel type={selectedType} data={selectedData} onClose={clearSelection}/>
+              ? <InfoPanel type={selectedType} data={selectedData} onClose={clearSelection} onRadiusChange={handleTowerRadiusChange}/>
               : <EnvironmentPanel />
             }
           </div>

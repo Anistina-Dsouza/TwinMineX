@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export default function Sidebar({ trucks, towers, selectedTruckId, selectedTowerId, onTruckSelect, onTowerSelect }) {
+export default function Sidebar({ trucks, towers, selectedTruckId, selectedTowerId, onTruckSelect, onTowerSelect, onTowerRadiusChange }) {
   const [fleetOpen,  setFleetOpen]  = useState(true);
   const [towersOpen, setTowersOpen] = useState(true);
 
@@ -164,7 +164,40 @@ export default function Sidebar({ trucks, towers, selectedTruckId, selectedTower
               <div style={{ display:"flex", gap:"8px" }}>
                 <Tag label="ACTIVE" color="var(--green)" />
                 <Tag label={`COV ${coverage}m`} color="var(--cyan-dim)" />
+                <Tag 
+                  label={`BATT ${Math.round(tower.battery ?? 100)}%`} 
+                  color={(tower.battery ?? 100) >= 60 ? "var(--green)" : ((tower.battery ?? 100) >= 20 ? "var(--amber)" : "var(--red)")} 
+                />
               </div>
+
+              {isSelected && (
+                <div 
+                  onClick={e => e.stopPropagation()} 
+                  style={{ 
+                    marginTop: "10px", 
+                    borderTop: "1px solid rgba(255,255,255,0.06)", 
+                    paddingTop: "8px" 
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "8px", color: "var(--text-secondary)" }}>ADJUST RADIUS</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--cyan)" }}>{coverage}m</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="100"
+                    max="1200"
+                    step="10"
+                    value={coverage}
+                    onChange={(e) => onTowerRadiusChange?.(tower._id, Number(e.target.value))}
+                    style={{
+                      width: "100%",
+                      accentColor: "var(--cyan)",
+                      cursor: "ew-resize"
+                    }}
+                  />
+                </div>
+              )}
             </div>
           );
         })}
