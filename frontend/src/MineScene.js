@@ -713,15 +713,79 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   ]);
 
   /* ── Road materials ── */
-  // Asphalt surface — dark charcoal grey, slight sheen
-  const matAsphalt     = stdMat({ color: 0x2c2c2c, emissive: 0x1a1a1a, emissiveIntensity: 0.06, roughness: 0.88, metalness: 0.02 });
-  // Haul road asphalt — slightly lighter, more worn
-  const matAsphaltHaul = stdMat({ color: 0x383838, emissive: 0x222222, emissiveIntensity: 0.08, roughness: 0.82, metalness: 0.03 });
-  // Pit road — compacted brown-red earth/gravel
-  const matAsphaltPit  = stdMat({ color: 0x5a3a20, emissive: 0x3a2210, emissiveIntensity: 0.12, roughness: 0.95, metalness: 0.0 });
+  function createDirtRoadTexture() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+
+    // Base dirt color (light greyish-brown to allow multiplying by color property)
+    ctx.fillStyle = "#a89b8d";
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Gravel specks
+    for (let i = 0; i < 6000; i++) {
+      const x = Math.random() * 512;
+      const y = Math.random() * 512;
+      const size = 1 + Math.random() * 2;
+      ctx.fillStyle = Math.random() > 0.5 ? "#c2b5a7" : "#8c7e70";
+      ctx.fillRect(x, y, size, size);
+    }
+
+    // Longitudinal tyre tracks (running horizontally along X, parallel to length U)
+    ctx.fillStyle = "rgba(74, 62, 50, 0.4)";
+    ctx.fillRect(0, 100, 512, 22);
+    ctx.fillRect(0, 150, 512, 22);
+
+    ctx.fillRect(0, 340, 512, 22);
+    ctx.fillRect(0, 390, 512, 22);
+
+    // Grading lines
+    for (let i = 0; i < 30; i++) {
+      const y = Math.random() * 512;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+      ctx.fillRect(0, y, 512, 2);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    return texture;
+  }
+
+  const texDirt = createDirtRoadTexture();
+
+  const matAsphaltPool = [];
+  const matAsphaltHaulPool = [];
+  const matAsphaltPitPool = [];
+
+  for (let r = 1; r <= 8; r++) {
+    const tNormal = texDirt.clone(); tNormal.repeat.set(r, 1); tNormal.needsUpdate = true;
+    const tHaul   = texDirt.clone(); tHaul.repeat.set(r, 1);   tHaul.needsUpdate = true;
+    const tPit    = texDirt.clone(); tPit.repeat.set(r, 1);    tPit.needsUpdate = true;
+
+    matAsphaltPool.push(new THREE.MeshStandardMaterial({
+      map: tNormal, bumpMap: tNormal, bumpScale: 0.08,
+      color: 0x9c8570, roughness: 0.95, metalness: 0.0,
+      emissive: 0x221a12, emissiveIntensity: 0.04
+    }));
+
+    matAsphaltHaulPool.push(new THREE.MeshStandardMaterial({
+      map: tHaul, bumpMap: tHaul, bumpScale: 0.08,
+      color: 0xb59e88, roughness: 0.90, metalness: 0.0,
+      emissive: 0x2a2016, emissiveIntensity: 0.05
+    }));
+
+    matAsphaltPitPool.push(new THREE.MeshStandardMaterial({
+      map: tPit, bumpMap: tPit, bumpScale: 0.12,
+      color: 0x7a5a3a, roughness: 0.98, metalness: 0.0,
+      emissive: 0x332010, emissiveIntensity: 0.08
+    }));
+  }
+
   // Gravel shoulder bed — lighter, rougher
-  const matGravel      = stdMat({ color: 0x6b6152, emissive: 0x4a4238, emissiveIntensity: 0.04, roughness: 1.0, metalness: 0.0 });
-  const matGravelPit   = stdMat({ color: 0x7a5a3a, emissive: 0x5a4228, emissiveIntensity: 0.06, roughness: 1.0, metalness: 0.0 });
+  const matGravel      = stdMat({ color: 0x8a7765, emissive: 0x221a12, emissiveIntensity: 0.04, roughness: 1.0, metalness: 0.0 });
+  const matGravelPit   = stdMat({ color: 0x6a4a2f, emissive: 0x2d1a0a, emissiveIntensity: 0.06, roughness: 1.0, metalness: 0.0 });
   // Edge lines — solid white
   const matEdgeLine    = new THREE.MeshBasicMaterial({ color: 0xeeeeee });
   // Centre line — dashed yellow for haul, solid white for normal
@@ -794,30 +858,37 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
 
       const segPerpXZ = new THREE.Vector3(-segDz, 0, segDx).normalize();
 
+      // Deterministic hash based on road name/edge and segment index to avoid width flickering
+      const hash = Math.sin((a.charCodeAt(0) * 13 + (b.charCodeAt(0) || 0) * 7 + s * 17)) * 0.5 + 0.5;
+      const widthVariation = (hash - 0.5) * 1.5; // variation of up to ±0.75 units
+      const segPaveW = paveW + widthVariation;
+      const segShouldW = shouldW + widthVariation;
+
       /* ─── Layer 1: Gravel shoulder bed (wider, sits underneath) ─── */
       const shoulderY = -0.12;  // slightly below pavement
       const shoulder = alignedMesh(
         x0, y0 + shoulderY, z0,
         x1, y1 + shoulderY, z1,
-        segLen3D, shouldH, shouldW,
+        segLen3D, shouldH, segShouldW,
         isPitRd ? matGravelPit : matGravel
       );
       scene.add(shoulder);
 
       /* ─── Layer 2: Asphalt pavement surface ─── */
       let paveMat;
-      if (isPitRd) paveMat = matAsphaltPit;
-      else if (isHaul) paveMat = matAsphaltHaul;
-      else paveMat = matAsphalt;
+      const ratio = Math.max(1, Math.min(8, Math.round(segLen3D / segPaveW)));
+      if (isPitRd) paveMat = matAsphaltPitPool[ratio - 1];
+      else if (isHaul) paveMat = matAsphaltHaulPool[ratio - 1];
+      else paveMat = matAsphaltPool[ratio - 1];
 
-      const pavement = alignedMesh(x0, y0, z0, x1, y1, z1, segLen3D, paveH, paveW, paveMat);
+      const pavement = alignedMesh(x0, y0, z0, x1, y1, z1, segLen3D, paveH, segPaveW, paveMat);
       pavement.castShadow = true;
       scene.add(pavement);
 
       /* ─── Layer 3: Edge lines — solid white strips along both sides ─── */
       const lineH = 0.08;
       const lineW = 0.6;
-      const edgeOffset = paveW / 2 - 0.5;  // just inside the pavement edge
+      const edgeOffset = segPaveW / 2 - 0.5;  // just inside the pavement edge
 
       for (const side of [-1, 1]) {
         const offX = segPerpXZ.x * edgeOffset * side;
@@ -842,19 +913,22 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
         scene.add(centreLine);
       }
 
-      /* ─── Layer 5: Pit road extras — guardrails ─── */
-      if (isPitRd) {
-        const railH = 2.2, railW = 0.5;
-        const railOffset = paveW / 2 + 1.5;
+      /* ─── Layer 5: Safety earth/rock berms (instead of steel guardrails) ─── */
+      if (isPitRd || isHaul) {
+        const bermH = 3.0, bermW = 2.5;
+        const bermOffset = segPaveW / 2 + 1.2;
         for (const side of [-1, 1]) {
-          const rOffX = segPerpXZ.x * railOffset * side;
-          const rOffZ = segPerpXZ.z * railOffset * side;
-          const rail = alignedMesh(
-            x0 + rOffX, y0 + railH/2 + paveH/2, z0 + rOffZ,
-            x1 + rOffX, y1 + railH/2 + paveH/2, z1 + rOffZ,
-            segLen3D, railH, railW, matGuardrail
+          const rOffX = segPerpXZ.x * bermOffset * side;
+          const rOffZ = segPerpXZ.z * bermOffset * side;
+          const berm = alignedMesh(
+            x0 + rOffX, y0 + bermH/2, z0 + rOffZ,
+            x1 + rOffX, y1 + bermH/2, z1 + rOffZ,
+            segLen3D, bermH, bermW,
+            isPitRd ? matGravelPit : matGravel
           );
-          scene.add(rail);
+          berm.castShadow = true;
+          berm.receiveShadow = true;
+          scene.add(berm);
         }
       }
     }
@@ -1451,6 +1525,66 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     resetEmissive(); onTruckSelect?.(null);
   }
 
+  /* ── Dust Particle System for Trucks ── */
+  const dustParticles = [];
+  const dustGeo = new THREE.SphereGeometry(3.5, 6, 6);
+  const baseDustMat = new THREE.MeshBasicMaterial({
+    color: 0xa5927e,
+    transparent: true,
+    opacity: 0.15,
+    depthWrite: false
+  });
+
+  function spawnDust(x, y, z, rotY) {
+    const backX = Math.sin(rotY);
+    const backZ = Math.cos(rotY);
+    const perpX = -backZ;
+    const perpZ = backX;
+
+    const wheelOffset = 7;
+    const wheels = [
+      { x: x - backX * 12 + perpX * wheelOffset, z: z - backZ * 12 + perpZ * wheelOffset },
+      { x: x - backX * 12 - perpX * wheelOffset, z: z - backZ * 12 - perpZ * wheelOffset }
+    ];
+
+    for (const w of wheels) {
+      const mesh = new THREE.Mesh(dustGeo, baseDustMat.clone());
+      mesh.position.set(w.x, y, w.z);
+      scene.add(mesh);
+
+      dustParticles.push({
+        mesh,
+        age: 0,
+        maxAge: 40 + Math.floor(Math.random() * 20),
+        velocity: new THREE.Vector3(
+          -backX * (0.8 + Math.random() * 0.8) + (Math.random() - 0.5) * 0.4,
+          0.1 + Math.random() * 0.2,
+          -backZ * (0.8 + Math.random() * 0.8) + (Math.random() - 0.5) * 0.4
+        )
+      });
+    }
+  }
+
+  function updateDustParticles() {
+    for (let i = dustParticles.length - 1; i >= 0; i--) {
+      const p = dustParticles[i];
+      p.age++;
+      if (p.age >= p.maxAge) {
+        scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        p.mesh.material.dispose();
+        dustParticles.splice(i, 1);
+      } else {
+        p.mesh.position.add(p.velocity);
+        p.velocity.multiplyScalar(0.96);
+        
+        const scale = 1.0 + (p.age / p.maxAge) * 3.5;
+        p.mesh.scale.set(scale, scale, scale);
+        p.mesh.material.opacity = 0.15 * (1 - p.age / p.maxAge);
+      }
+    }
+  }
+
   /* ════════════════════════════════════════════════
      ANIMATION
   ════════════════════════════════════════════════ */
@@ -1482,6 +1616,11 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
         ? (na.y + (nb.y - na.y) * t.progress + 9)
         : (getZ(t.mesh.position.x + 75, t.mesh.position.z + 225) * 0.04 + 9);
       t.mesh.rotation.y = Math.atan2(nb.x-na.x, nb.z-na.z);
+
+      // Spawn dust clouds every 3 frames if truck is moving
+      if (frame % 3 === 0) {
+        spawnDust(t.mesh.position.x, t.mesh.position.y - 5, t.mesh.position.z, t.mesh.rotation.y);
+      }
     });
 
     // 1. Move towers dynamically along road paths towards assigned truck clusters
@@ -1624,6 +1763,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     });
 
     if (frame % 90 === 0) heatmap.update(truckObjects);
+    updateDustParticles();
 
     // Beacon pulse
     scene.traverse(obj => {
