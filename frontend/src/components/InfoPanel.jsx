@@ -1,4 +1,4 @@
-export default function InfoPanel({ type, data, onClose, onRadiusChange }) {
+export default function InfoPanel({ type, data, onClose }) {
   if (!data) return null;
 
   return (
@@ -62,29 +62,8 @@ export default function InfoPanel({ type, data, onClose, onRadiusChange }) {
 
         {type === "tower" && <>
           <Row label="STATUS"   value="ACTIVE"                color="var(--green)" />
-          <Row label="BATTERY"  value={`${Math.round(data.battery ?? 100)}%`} color={(data.battery ?? 100) >= 60 ? "var(--green)" : ((data.battery ?? 100) >= 20 ? "var(--amber)" : "var(--red)")} />
           <Row label="COVERAGE" value={`${data.coverage}m`}  color="var(--cyan)" />
           <Row label="POSITION" value={`${data.x}, ${data.z}`} color="var(--text-primary)" />
-          
-          <div style={{ marginTop:"8px", borderTop:"1px solid var(--border)", paddingTop:"8px" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"4px" }}>
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:"9px", letterSpacing:"0.14em", color:"var(--text-secondary)" }}>RADIUS CONTROL</span>
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:"11px", color:"var(--cyan)" }}>{data.coverage}m</span>
-            </div>
-            <input 
-              type="range"
-              min="100"
-              max="1200"
-              step="10"
-              value={data.coverage}
-              onChange={(e) => onRadiusChange?.(data.id, Number(e.target.value))}
-              style={{
-                width: "100%",
-                accentColor: "var(--cyan)",
-                cursor: "ew-resize"
-              }}
-            />
-          </div>
           {/* Coverage ring vis */}
           <div style={{ marginTop:"6px", display:"flex", alignItems:"center", justifyContent:"center" }}>
             <div style={{

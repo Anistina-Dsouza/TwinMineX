@@ -36,7 +36,6 @@ export default function App() {
   useEffect(() => {
     if (trucks.length === 0) return;
     const interval = setInterval(() => {
-      // 1. Update Trucks
       setTrucks(prevTrucks => {
         const sceneTrucks = sceneRef.current?.getTruckObjects?.();
         const updated = prevTrucks.map(t => {
@@ -74,27 +73,11 @@ export default function App() {
 
         return updated;
       });
-
-      // 2. Update Towers
-      setTowers(prevTowers => {
-        const sceneTowers = sceneRef.current?.getTowerObjects?.();
-        if (!sceneTowers) return prevTowers;
-        return prevTowers.map(t => {
-          const st = sceneTowers.find(stObj => stObj.id === t._id);
-          if (st) {
-            return {
-              ...t,
-              battery: st.battery,
-            };
-          }
-          return t;
-        });
-      });
     }, 2000);
     return () => clearInterval(interval);
   }, [trucks.length]);
 
-  // Sync selectedData when trucks or towers telemetry updates
+  // Sync selectedData when trucks telemetry updates
   useEffect(() => {
     if (selectedType === "truck" && selectedTruckId) {
       const t = trucks.find(t => t._id === selectedTruckId);
@@ -104,19 +87,8 @@ export default function App() {
           battery: t.battery, speed: t.speed ?? 30, latency: t.latency ?? 15,
         });
       }
-    } else if (selectedType === "tower" && selectedTowerId) {
-      const t = towers.find(t => t._id === selectedTowerId);
-      if (t) {
-        setSelectedData({
-          id: t._id,
-          coverage: t.coverageRadius ?? 200,
-          x: Math.round(t.x),
-          z: Math.round(t.z),
-          battery: t.battery ?? 100
-        });
-      }
     }
-  }, [trucks, towers, selectedType, selectedTruckId, selectedTowerId]);
+  }, [trucks, selectedType, selectedTruckId]);
 
   const clearSelection = useCallback(() => {
     setSelectedType(null); setSelectedData(null);
@@ -151,33 +123,6 @@ export default function App() {
     setSelectedTruckId(null);
     setSelectedData({ id: t._id, coverage: t.coverageRadius ?? 200, x: Math.round(t.x), z: Math.round(t.z) });
   }, [towers]);
-
-  const handleTowerRadiusChange = useCallback(async (id, newRadius) => {
-    // 1. Update local state
-    setTowers(prevTowers => prevTowers.map(t => {
-      if (t._id === id) {
-        return { ...t, coverageRadius: newRadius };
-      }
-      return t;
-    }));
-
-    // 2. Update selectedData if the current tower is selected
-    if (selectedTowerId === id) {
-      setSelectedData(prevData => ({ ...prevData, coverage: newRadius }));
-    }
-
-    // 3. Update the Three.js scene
-    if (sceneRef.current && sceneRef.current.updateTowerRadius) {
-      sceneRef.current.updateTowerRadius(id, newRadius);
-    }
-
-    // 4. Send PUT request to backend to persist the changes
-    try {
-      await axios.put(`http://localhost:5000/towers/${id}`, { coverageRadius: newRadius });
-    } catch (error) {
-      console.error("Failed to update tower radius in database:", error);
-    }
-  }, [selectedTowerId]);
 
   const handleHeatmapToggle = () => {
     if (!sceneRef.current) return;
@@ -276,7 +221,6 @@ export default function App() {
           selectedTowerId={selectedTowerId}
           onTruckSelect={selectTruck}
           onTowerSelect={handleTowerSelect}
-          onTowerRadiusChange={handleTowerRadiusChange}
         />
 
         <main style={{ flex:1, position:"relative", background:"var(--bg-scene)", overflow:"hidden" }}>
@@ -291,7 +235,7 @@ export default function App() {
           {/* Top-right panel */}
           <div style={{ position:"absolute", top:"14px", right:"14px", zIndex:20 }}>
             {selectedData
-              ? <InfoPanel type={selectedType} data={selectedData} onClose={clearSelection} onRadiusChange={handleTowerRadiusChange}/>
+              ? <InfoPanel type={selectedType} data={selectedData} onClose={clearSelection}/>
               : <EnvironmentPanel />
             }
           </div>

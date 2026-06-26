@@ -71,7 +71,8 @@ const _RAW = {
   ne_q_2_a:         [500, -100], ne_q_2_b:         [450, -150], ne_q_2_c:         [500, -250],
   ne_q_2_d:         [700, -250], ne_q_2_e:         [750, -150], ne_q_2_f:         [700, -100],
   parking_1:        [500,  630], parking_2:        [500,  670],
-  purple_auto_fix_1:[  80, 166], purple_auto_fix_2:[-200, 250], purple_auto_fix_3:[-300, 250],
+  purple_auto_3:     [150.8, 489.6],
+  purple_auto_fix_1:[  80, 166.7], purple_auto_fix_2:[-200, 250], purple_auto_fix_3:[-300, 250],
   s_connector_1:    [  0,  550], s_connector_2:    [-50,  450],
   s_dump_spur_1:    [ 50,  720], s_dump_spur_2:    [150,  770], s_dump_spur_3:    [250,  720],
   s_dump_spur_4:    [-50,  720], s_dump_spur_5:    [ 50,  820], s_dump_spur_6:    [250,  820], s_dump_spur_7: [350, 720],
@@ -137,56 +138,9 @@ for (const [name, value] of Object.entries(_RAW)) {
   const wx = rx - OX;
   const wy = ry - OY;
 
-  let yVal = getZ(rx, ry) * 0.04;
-  
-  // FW Pit adjustments
-  const fwDeep = [
-    "fw_pit_1_a", "fw_pit_1_b", "fw_pit_1_c", "fw_pit_1_d", "fw_pit_1_e", "fw_pit_1_f", "fw_pit_1_g",
-    "fw_load_spur_1", "fw_load_spur_2", "fw_load_spur_3", "fw_load_spur_4",
-    "load_zone_4", "load_zone_5", "load_zone_6", "load_zone_7"
-  ];
-  const fwMid = [
-    "fw_pit_2_a", "fw_pit_2_b", "fw_pit_2_c", "fw_pit_2_d", "fw_pit_2_e", "fw_pit_2_f", "fw_pit_2_g",
-    "fw_load_spur_5", "fw_load_spur_6", "fw_load_spur_7", "fw_load_spur_8",
-    "load_zone_8", "load_zone_9", "load_zone_10", "load_zone_11"
-  ];
-  
-  // North Pit adjustments
-  const nDeep = [
-    "n_q_1_a", "n_q_1_b", "n_q_1_c", "n_q_1_d", "n_q_1_e", "n_q_1_f",
-    "n_load_spur_1", "n_load_spur_2", "n_load_spur_3",
-    "load_zone_16", "load_zone_17", "load_zone_18"
-  ];
-  
-  // Northeast Pit adjustments
-  const neDeep = [
-    "ne_q_1_a", "ne_q_1_b", "ne_q_1_c", "ne_q_1_d", "ne_q_1_e", "ne_q_1_f",
-    "ne_load_spur_1", "ne_load_spur_2", "ne_load_spur_3",
-    "load_zone_24", "load_zone_25", "load_zone_26"
-  ];
-  
-  // South Pit adjustments
-  const sDeep = [
-    "s_sp_1_a", "s_sp_1_b", "s_sp_1_c", "s_sp_1_d", "s_sp_1_e", "s_sp_1_f",
-    "s_dump_spur_1", "s_dump_spur_2", "s_dump_spur_3",
-    "dump_zone_15", "dump_zone_16", "dump_zone_17"
-  ];
-
-  if (fwDeep.includes(name)) {
-    yVal = -70;
-  } else if (fwMid.includes(name)) {
-    yVal = -35;
-  } else if (nDeep.includes(name)) {
-    yVal = -65;
-  } else if (neDeep.includes(name)) {
-    yVal = -65;
-  } else if (sDeep.includes(name)) {
-    yVal = -65;
-  }
-
   NODES[name] = {
     x: wx,
-    y: yVal,
+    y: getZ(rx, ry) * 0.04,
     z: wy,
   };
 }
@@ -348,11 +302,45 @@ export const EDGES = [
   ["connector_2_2","ix_east_2"],["ix_north_2","connector_1_1"],
 ].filter(([a, b]) => NODES[a] && NODES[b]);
 
+// ── Smooth elevation along roads (matches Python _smooth) ──────────────
+function smoothNodes(nodes, edges, iters = 7) {
+  for (let iter = 0; iter < iters; iter++) {
+    const nextY = {};
+    for (const name of Object.keys(nodes)) {
+      const node = nodes[name];
+      const nbrs = [];
+      for (const [u, v] of edges) {
+        if (u === name && nodes[v]) {
+          nbrs.push(v);
+        } else if (v === name && nodes[u]) {
+          nbrs.push(u);
+        }
+      }
+      if (nbrs.length > 0) {
+        let sum = 0;
+        for (const nbr of nbrs) {
+          sum += nodes[nbr].y;
+        }
+        const avg = sum / nbrs.length;
+        nextY[name] = 0.7 * node.y + 0.3 * avg;
+      } else {
+        nextY[name] = node.y;
+      }
+    }
+    for (const name of Object.keys(nodes)) {
+      nodes[name].y = nextY[name];
+    }
+  }
+}
+
+smoothNodes(NODES, EDGES);
+
 // ── Road graph ────────────────────────────────────────────────────────
 export const ROAD_GRAPH = {};
 for (const name of Object.keys(NODES)) ROAD_GRAPH[name] = [];
 for (const [a, b] of EDGES) {
-  const d = Math.hypot(NODES[a].x - NODES[b].x, NODES[a].z - NODES[b].z);
+  const dy = (NODES[a].y - NODES[b].y) / 0.04;
+  const d = Math.hypot(NODES[a].x - NODES[b].x, dy, NODES[a].z - NODES[b].z);
   ROAD_GRAPH[a].push({ node: b, dist: d });
   ROAD_GRAPH[b].push({ node: a, dist: d });
 }

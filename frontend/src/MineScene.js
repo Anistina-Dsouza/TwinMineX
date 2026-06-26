@@ -477,8 +477,50 @@ const C = {
 /* ═══════════════════════════════════════════════════════════
    MATERIAL FACTORY
 ═══════════════════════════════════════════════════════════ */
-function stdMat({ color, emissive, emissiveIntensity = 0, roughness = 0.7, metalness = 0.1 } = {}) {
-  return new THREE.MeshStandardMaterial({ color, emissive: emissive ?? color, emissiveIntensity, roughness, metalness });
+// ── Lightweight 2D Value Noise & Fractional Brownian Motion (FBM) ──
+function hash2(x, y) {
+  const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453123;
+  return h - Math.floor(h);
+}
+
+function noise2(x, y) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+
+  const ux = fx * fx * (3.0 - 2.0 * fx);
+  const uy = fy * fy * (3.0 - 2.0 * fy);
+
+  const a = hash2(ix, iy);
+  const b = hash2(ix + 1, iy);
+  const c = hash2(ix, iy + 1);
+  const d = hash2(ix + 1, iy + 1);
+
+  return a * (1 - ux) * (1 - uy) +
+         b * ux * (1 - uy) +
+         c * (1 - ux) * uy +
+         d * ux * uy;
+}
+
+function fbm(x, y, octaves = 3) {
+  let value = 0.0;
+  let amplitude = 1.0;
+  let frequency = 1.0;
+  let totalAmplitude = 0.0;
+
+  for (let i = 0; i < octaves; i++) {
+    value += amplitude * noise2(x * frequency, y * frequency);
+    totalAmplitude += amplitude;
+    amplitude *= 0.5;
+    frequency *= 2.0;
+  }
+
+  return value / totalAmplitude;
+}
+
+function stdMat({ color, emissive, emissiveIntensity = 0, roughness = 0.7, metalness = 0.1, side = THREE.FrontSide } = {}) {
+  return new THREE.MeshStandardMaterial({ color, emissive: emissive ?? color, emissiveIntensity, roughness, metalness, side });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -549,14 +591,14 @@ function injectLegend(container) {
   `;
 
   const items = [
-    { color:"#ffaa00", label:"Load Zone" },
-    { color:"#ff6633", label:"Dump Zone" },
-    { color:"#00ddff", label:"Fuel Station" },
-    { color:"#4488ff", label:"Hub / Junction" },
-    { color:"#00ff88", label:"Start Zone" },
-    { color:"#cc66ff", label:"Parking" },
-    { color:"#ff8800", label:"Haul Truck" },
-    { color:"#00ffaa", label:"Signal Tower" },
+    { color:"#ff8800", label:"LAND CORE" },
+    { color:"#8b5a2b", label:"DEEP PIT" },
+    { color:"#00ffff", label:"FUEL STATION" },
+    { color:"#2266ff", label:"MAINTENANCE" },
+    { color:"#00ff66", label:"SHAFT ZONE" },
+    { color:"#aa33ff", label:"REFINERY" },
+    { color:"#ff4400", label:"HAUL TRUCK" },
+    { color:"#00ccff", label:"SIGNAL TOWERS" },
   ];
 
   div.innerHTML = `
@@ -603,6 +645,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     54, container.clientWidth / container.clientHeight, 1, 12000
   );
   camera.position.set(0, 400, 600);
+  scene.add(camera);
 
   /* ── Renderer ── */
   const renderer = new THREE.WebGLRenderer({
@@ -625,6 +668,68 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   vrButton.style.transform = "translateX(-50%)";
   vrButton.style.zIndex = "100";
   container.appendChild(vrButton);
+
+  /* ── VR User Rig & Teleportation ── */
+  const xrRig = new THREE.Group();
+  scene.add(xrRig);
+
+  const teleportTargets = [];
+  const controllers = [];
+
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1)
+  ]);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0x00ffaa,
+    transparent: true,
+    opacity: 0.8
+  });
+
+  const markerGeo = new THREE.RingGeometry(8, 10, 32);
+  markerGeo.rotateX(-Math.PI / 2);
+  const markerMat = new THREE.MeshBasicMaterial({
+    color: 0x00ffaa,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.8
+  });
+  const teleportMarker = new THREE.Mesh(markerGeo, markerMat);
+  teleportMarker.visible = false;
+  scene.add(teleportMarker);
+
+  const tempMatrix = new THREE.Matrix4();
+  const vrRaycaster = new THREE.Raycaster();
+
+  for (let i = 0; i < 2; i++) {
+    const controller = renderer.xr.getController(i);
+    controller.addEventListener("selectstart", () => {
+      controller.userData.isSelecting = true;
+    });
+    controller.addEventListener("selectend", () => {
+      controller.userData.isSelecting = false;
+      if (teleportMarker.visible) {
+        xrRig.position.copy(teleportMarker.position);
+        teleportMarker.visible = false;
+      }
+    });
+    xrRig.add(controller);
+    controllers.push(controller);
+
+    const pointerLine = new THREE.Line(lineGeo, lineMat);
+    pointerLine.name = "pointerLine";
+    pointerLine.scale.z = 800;
+    controller.add(pointerLine);
+  }
+
+  renderer.xr.addEventListener("sessionstart", () => {
+    xrRig.position.set(0, 100, 300);
+    xrRig.add(camera);
+  });
+  renderer.xr.addEventListener("sessionend", () => {
+    xrRig.position.set(0, 0, 0);
+    scene.add(camera);
+  });
 
   /* ── Controls ── */
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -713,47 +818,16 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   ]);
 
   /* ── Road materials ── */
-  function createDirtRoadTexture() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext("2d");
+  const texLoader = new THREE.TextureLoader();
+  
+  const texDirt = texLoader.load("/unpaved_haul_road_texture.png");
+  texDirt.wrapS = THREE.RepeatWrapping;
+  texDirt.wrapT = THREE.RepeatWrapping;
+  
+  const texRock = texLoader.load("/open_pit_rock_texture.png");
+  texRock.wrapS = THREE.RepeatWrapping;
+  texRock.wrapT = THREE.RepeatWrapping;
 
-    // Base dirt color (light greyish-brown to allow multiplying by color property)
-    ctx.fillStyle = "#a89b8d";
-    ctx.fillRect(0, 0, 512, 512);
-
-    // Gravel specks
-    for (let i = 0; i < 6000; i++) {
-      const x = Math.random() * 512;
-      const y = Math.random() * 512;
-      const size = 1 + Math.random() * 2;
-      ctx.fillStyle = Math.random() > 0.5 ? "#c2b5a7" : "#8c7e70";
-      ctx.fillRect(x, y, size, size);
-    }
-
-    // Longitudinal tyre tracks (running horizontally along X, parallel to length U)
-    ctx.fillStyle = "rgba(74, 62, 50, 0.4)";
-    ctx.fillRect(0, 100, 512, 22);
-    ctx.fillRect(0, 150, 512, 22);
-
-    ctx.fillRect(0, 340, 512, 22);
-    ctx.fillRect(0, 390, 512, 22);
-
-    // Grading lines
-    for (let i = 0; i < 30; i++) {
-      const y = Math.random() * 512;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
-      ctx.fillRect(0, y, 512, 2);
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    return texture;
-  }
-
-  const texDirt = createDirtRoadTexture();
 
   const matAsphaltPool = [];
   const matAsphaltHaulPool = [];
@@ -767,32 +841,35 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     matAsphaltPool.push(new THREE.MeshStandardMaterial({
       map: tNormal, bumpMap: tNormal, bumpScale: 0.08,
       color: 0x9c8570, roughness: 0.95, metalness: 0.0,
-      emissive: 0x221a12, emissiveIntensity: 0.04
+      emissive: 0x221a12, emissiveIntensity: 0.04,
+      side: THREE.DoubleSide
     }));
 
     matAsphaltHaulPool.push(new THREE.MeshStandardMaterial({
       map: tHaul, bumpMap: tHaul, bumpScale: 0.08,
       color: 0xb59e88, roughness: 0.90, metalness: 0.0,
-      emissive: 0x2a2016, emissiveIntensity: 0.05
+      emissive: 0x2a2016, emissiveIntensity: 0.05,
+      side: THREE.DoubleSide
     }));
 
     matAsphaltPitPool.push(new THREE.MeshStandardMaterial({
       map: tPit, bumpMap: tPit, bumpScale: 0.12,
       color: 0x7a5a3a, roughness: 0.98, metalness: 0.0,
-      emissive: 0x332010, emissiveIntensity: 0.08
+      emissive: 0x332010, emissiveIntensity: 0.08,
+      side: THREE.DoubleSide
     }));
   }
 
   // Gravel shoulder bed — lighter, rougher
-  const matGravel      = stdMat({ color: 0x8a7765, emissive: 0x221a12, emissiveIntensity: 0.04, roughness: 1.0, metalness: 0.0 });
-  const matGravelPit   = stdMat({ color: 0x6a4a2f, emissive: 0x2d1a0a, emissiveIntensity: 0.06, roughness: 1.0, metalness: 0.0 });
+  const matGravel      = stdMat({ color: 0x8a7765, emissive: 0x221a12, emissiveIntensity: 0.04, roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide });
+  const matGravelPit   = stdMat({ color: 0x6a4a2f, emissive: 0x2d1a0a, emissiveIntensity: 0.06, roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide });
   // Edge lines — solid white
-  const matEdgeLine    = new THREE.MeshBasicMaterial({ color: 0xeeeeee });
+  const matEdgeLine    = new THREE.MeshBasicMaterial({ color: 0xeeeeee, side: THREE.DoubleSide });
   // Centre line — dashed yellow for haul, solid white for normal
-  const matCentreYellow = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
-  const matCentreWhite  = new THREE.MeshBasicMaterial({ color: 0xdddddd });
+  const matCentreYellow = new THREE.MeshBasicMaterial({ color: 0xffcc00, side: THREE.DoubleSide });
+  const matCentreWhite  = new THREE.MeshBasicMaterial({ color: 0xdddddd, side: THREE.DoubleSide });
   // Pit road amber centre
-  const matCentrePit    = new THREE.MeshBasicMaterial({ color: 0xd4a44c });
+  const matCentrePit    = new THREE.MeshBasicMaterial({ color: 0xd4a44c, side: THREE.DoubleSide });
   // Barrier/guardrail materials
   const matGuardrail    = stdMat({ color: 0xcccccc, emissive: 0x888888, emissiveIntensity: 0.1, roughness: 0.4, metalness: 0.6 });
   const matBollardRed   = new THREE.MeshBasicMaterial({ color: 0xdd2200 });
@@ -810,171 +887,353 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   }
 
   /* ── Per-edge road rendering (terrain-conforming segmented roads) ── */
+  const roadCurves = new Map();
+  const OX = 75, OY = 225;
+
+  // Custom 3D road geometry generator with width subdivision, CPU displacement, and vertical side walls (for 3D volume)
+  function createRoadGeometry(na, nb, width, heightOffset = 0, isPavement = false) {
+    const geom = new THREE.BufferGeometry();
+    
+    const ax = na.x, az = na.z;
+    const bx = nb.x, bz = nb.z;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const lenHorizontal = Math.hypot(dx, dz);
+    
+    const segments = Math.max(8, Math.floor(lenHorizontal / 10));
+    const widthSegments = isPavement ? 6 : 2; // high resolution only for pavement to save vertices
+    
+    const vertices = [];
+    const indices = [];
+    const uvs = [];
+
+    const dirX = dx / lenHorizontal;
+    const dirZ = dz / lenHorizontal;
+    const perpX = -dirZ;
+    const perpZ = dirX;
+
+    // 1. Generate Top Surface Vertices
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const wx = ax + dx * t;
+      const wz = az + dz * t;
+      const u = t * lenHorizontal;
+
+      for (let j = 0; j <= widthSegments; j++) {
+        const t_w = j / widthSegments;
+        const offsetFactor = t_w - 0.5; // -0.5 to 0.5
+
+        const vx = wx + perpX * (width * offsetFactor);
+        const vz = wz + perpZ * (width * offsetFactor);
+        let vy = getZ(vx + OX, vz + OY) * 0.04 + heightOffset;
+
+        if (isPavement) {
+          const dist = Math.abs(width * offsetFactor);
+          // Apply Perlin noise for unpaved roughness
+          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.35;
+
+          // Tire ruts centered at dist = 3.0
+          const rutCenter = 3.0;
+          const rutWidth = 1.6;
+          const distToRut = Math.abs(dist - rutCenter);
+          let rutVal = 0;
+          if (distToRut < rutWidth) {
+            rutVal = -0.2 * (1.0 + Math.cos(distToRut * Math.PI / rutWidth));
+          }
+          vy += noiseVal + rutVal;
+        } else {
+          // Shoulder gets noise roughness
+          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.2;
+          vy += noiseVal;
+        }
+
+        vertices.push(vx, vy, vz);
+        uvs.push(u, t_w);
+      }
+    }
+
+    const N_top = (segments + 1) * (widthSegments + 1);
+
+    // 2. Generate Top Surface Indices
+    const rowSize = widthSegments + 1;
+    for (let i = 0; i < segments; i++) {
+      for (let j = 0; j < widthSegments; j++) {
+        const v0 = i * rowSize + j;
+        const v1 = i * rowSize + (j + 1);
+        const v2 = (i + 1) * rowSize + j;
+        const v3 = (i + 1) * rowSize + (j + 1);
+
+        indices.push(v0, v1, v2);
+        indices.push(v1, v3, v2);
+      }
+    }
+
+    // 3. Generate Side Wall Vertices (left and right edges extruded downwards for 3D thickness)
+    const thickness = isPavement ? 1.2 : 0.8;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const wx = ax + dx * t;
+      const wz = az + dz * t;
+      const u = t * lenHorizontal;
+
+      // Left edge (j = 0)
+      const offsetFactor_l = -0.5;
+      const vx_l = wx + perpX * (width * offsetFactor_l);
+      const vz_l = wz + perpZ * (width * offsetFactor_l);
+      let vy_l = getZ(vx_l + OX, vz_l + OY) * 0.04 + heightOffset;
+      if (isPavement) {
+        vy_l += fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.2;
+      } else {
+        vy_l += fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.2;
+      }
+      vertices.push(vx_l, vy_l - thickness, vz_l);
+      uvs.push(u, 0);
+
+      // Right edge (j = widthSegments)
+      const offsetFactor_r = 0.5;
+      const vx_r = wx + perpX * (width * offsetFactor_r);
+      const vz_r = wz + perpZ * (width * offsetFactor_r);
+      let vy_r = getZ(vx_r + OX, vz_r + OY) * 0.04 + heightOffset;
+      if (isPavement) {
+        vy_r += fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.2;
+      } else {
+        vy_r += fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.2;
+      }
+      vertices.push(vx_r, vy_r - thickness, vz_r);
+      uvs.push(u, 1);
+    }
+
+    // 4. Generate Side Wall Indices
+    for (let i = 0; i < segments; i++) {
+      // Left side wall
+      const tl_cur = i * rowSize;
+      const tl_nxt = (i + 1) * rowSize;
+      const bl_cur = N_top + i * 2;
+      const bl_nxt = N_top + (i + 1) * 2;
+
+      indices.push(tl_cur, tl_nxt, bl_cur);
+      indices.push(tl_nxt, bl_nxt, bl_cur);
+
+      // Right side wall
+      const tr_cur = i * rowSize + widthSegments;
+      const tr_nxt = (i + 1) * rowSize + widthSegments;
+      const br_cur = N_top + i * 2 + 1;
+      const br_nxt = N_top + (i + 1) * 2 + 1;
+
+      indices.push(tr_cur, br_cur, tr_nxt);
+      indices.push(tr_nxt, br_cur, br_nxt);
+    }
+
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+
+    return geom;
+  }
+
+  // Custom 3D safety berm (earth mound) geometry generator
+  function createBermGeometry(na, nb, bermOffset, bermH, bermW) {
+    const geom = new THREE.BufferGeometry();
+    
+    const ax = na.x, az = na.z;
+    const bx = nb.x, bz = nb.z;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const lenHorizontal = Math.hypot(dx, dz);
+    
+    const segments = Math.max(8, Math.floor(lenHorizontal / 10));
+    const vertices = [];
+    const indices = [];
+
+    const dirX = dx / lenHorizontal;
+    const dirZ = dz / lenHorizontal;
+    const perpX = -dirZ;
+    const perpZ = dirX;
+
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const wx = ax + dx * t;
+      const wz = az + dz * t;
+      const wy = getZ(wx + OX, wz + OY) * 0.04 + 0.02; // shoulder height
+
+      // Left base of the berm
+      const lx = wx + perpX * (bermOffset - bermW / 2);
+      const lz = wz + perpZ * (bermOffset - bermW / 2);
+      
+      // Right base of the berm
+      const rx = wx + perpX * (bermOffset + bermW / 2);
+      const rz = wz + perpZ * (bermOffset + bermW / 2);
+      
+      // Top center of the berm
+      const tx = wx + perpX * bermOffset;
+      const tz = wz + perpZ * bermOffset;
+      const ty = wy + bermH;
+
+      vertices.push(lx, wy, lz); // 0
+      vertices.push(rx, wy, rz); // 1
+      vertices.push(tx, ty, tz); // 2
+    }
+
+    for (let i = 0; i < segments; i++) {
+      const base = i * 3;
+      const next = (i + 1) * 3;
+
+      // Triangle 1: left side (lx_i, tx_i, lx_next)
+      indices.push(base, base + 2, next);
+      // Triangle 2: left side next (tx_i, tx_next, lx_next)
+      indices.push(base + 2, next + 2, next);
+
+      // Triangle 3: right side (tx_i, rx_i, tx_next)
+      indices.push(base + 2, base + 1, next + 2);
+      // Triangle 4: right side next (rx_i, rx_next, tx_next)
+      indices.push(base + 1, next + 1, next + 2);
+    }
+
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+
+    return geom;
+  }
+
   for (const [a, b] of EDGES) {
     const na = NODES[a], nb = NODES[b];
     if (!na || !nb) continue;
 
-    const sx = na.x, sy = na.y + 0.3, sz = na.z;
-    const ex = nb.x, ey = nb.y + 0.3, ez = nb.z;
-    const dx = ex - sx, dy = ey - sy, dz = ez - sz;
-    const len3D = Math.sqrt(dx*dx + dy*dy + dz*dz);
-    if (len3D < 0.5) continue;
+    const dx = nb.x - na.x;
+    const dz = nb.z - na.z;
+    const lenHorizontal = Math.hypot(dx, dz);
+    if (lenHorizontal < 0.5) continue;
+
+    // Generate terrain-conforming 3D curves for asset clamping
+    const curvePoints = [];
+    const segments = Math.max(8, Math.floor(lenHorizontal / 10));
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const wx = na.x + dx * t;
+      const wz = na.z + dz * t;
+      const rx = wx + OX;
+      const ry = wz + OY;
+      const wy = getZ(rx, ry) * 0.04;
+      curvePoints.push(new THREE.Vector3(wx, wy + 0.06, wz)); // 0.06 is pavement elevation offset
+    }
+    const curve = new THREE.CatmullRomCurve3(curvePoints);
+    roadCurves.set(`${a}_${b}`, curve);
+    const curvePointsReversed = [...curvePoints].reverse();
+    roadCurves.set(`${b}_${a}`, new THREE.CatmullRomCurve3(curvePointsReversed));
 
     const isHaul  = mainHaulSet.has(a) || mainHaulSet.has(b);
     const isPitRd = PIT_ROAD_NODES.has(a) && PIT_ROAD_NODES.has(b);
 
-    // Road dimensions — wide enough for haul trucks
-    const paveW    = isHaul ? 20 : (isPitRd ? 14 : 12);     // pavement width
-    const paveH    = 0.4;                                     // thin flat surface
-    const shouldW  = paveW + 8;                               // gravel shoulder width
-    const shouldH  = 0.25;                                    // shoulder slightly below pavement
+    // Road dimensions
+    const paveW    = isHaul ? 20 : (isPitRd ? 14 : 12);
+    const shouldW  = paveW + 8;
+    const paveH    = 0.4; // thickness standard
 
-    const dir3 = new THREE.Vector3(dx, dy, dz).normalize();
-    const perpXZ = new THREE.Vector3(-dz, 0, dx).normalize(); // perpendicular on XZ plane
+    /* ─── Layer 1: Gravel shoulder bed (sits underneath) ─── */
+    const shoulderGeom = createRoadGeometry(na, nb, shouldW, 0.02, false);
+    const shoulderMesh = new THREE.Mesh(shoulderGeom, isPitRd ? matGravelPit : matGravel);
+    shoulderMesh.receiveShadow = true;
+    scene.add(shoulderMesh);
+    teleportTargets.push(shoulderMesh);
 
-    // Divide the road into 15-unit segments to wrap smoothly over terrain hills and valleys
-    const SEG_LENGTH = 15;
-    const numSegments = Math.max(1, Math.ceil(len3D / SEG_LENGTH));
+    /* ─── Layer 2: Dirt road pavement surface ─── */
+    const ratio = Math.max(1, Math.min(8, Math.round(lenHorizontal / paveW)));
+    const paveMat = isPitRd ? matAsphaltPitPool[ratio - 1] : (isHaul ? matAsphaltHaulPool[ratio - 1] : matAsphaltPool[ratio - 1]);
+    const paveGeom = createRoadGeometry(na, nb, paveW, 0.06, true);
+    const pavementMesh = new THREE.Mesh(paveGeom, paveMat);
+    pavementMesh.castShadow = true;
+    pavementMesh.receiveShadow = true;
+    scene.add(pavementMesh);
+    teleportTargets.push(pavementMesh);
 
-    for (let s = 0; s < numSegments; s++) {
-      const t0 = s / numSegments;
-      const t1 = (s + 1) / numSegments;
+    /* ─── Layer 3: Edge lines ─── */
+    const edgeOffset = paveW / 2 - 0.5;
+    const lineW = 0.6;
 
-      const x0 = sx + dx * t0;
-      const z0 = sz + dz * t0;
-      const x1 = sx + dx * t1;
-      const z1 = sz + dz * t1;
+    // Left edge line
+    const leftLineGeom = createRoadGeometry(na, nb, lineW, 0.08, false);
+    const leftPos = leftLineGeom.attributes.position;
+    const perpX = -dz / lenHorizontal, perpZ = dx / lenHorizontal;
+    for (let i = 0; i < leftPos.count; i++) {
+      leftPos.setX(i, leftPos.getX(i) - perpX * edgeOffset);
+      leftPos.setZ(i, leftPos.getZ(i) - perpZ * edgeOffset);
+    }
+    leftLineGeom.computeVertexNormals();
+    const leftLineMesh = new THREE.Mesh(leftLineGeom, isPitRd ? matCentrePit : matEdgeLine);
+    scene.add(leftLineMesh);
 
-      // If the edge involves a pit node, interpolate Y linearly. Otherwise, conform to the terrain using getZ
-      const involvesPit = PIT_ROAD_NODES.has(a) || PIT_ROAD_NODES.has(b);
-      const y0 = involvesPit ? (sy + (ey - sy) * t0) : (getZ(x0 + 75, z0 + 225) * 0.04 + 0.3);
-      const y1 = involvesPit ? (sy + (ey - sy) * t1) : (getZ(x1 + 75, z1 + 225) * 0.04 + 0.3);
+    // Right edge line
+    const rightLineGeom = createRoadGeometry(na, nb, lineW, 0.08, false);
+    const rightPos = rightLineGeom.attributes.position;
+    for (let i = 0; i < rightPos.count; i++) {
+      rightPos.setX(i, rightPos.getX(i) + perpX * edgeOffset);
+      rightPos.setZ(i, rightPos.getZ(i) + perpZ * edgeOffset);
+    }
+    rightLineGeom.computeVertexNormals();
+    const rightLineMesh = new THREE.Mesh(rightLineGeom, isPitRd ? matCentrePit : matEdgeLine);
+    scene.add(rightLineMesh);
 
-      const segDx = x1 - x0;
-      const segDy = y1 - y0;
-      const segDz = z1 - z0;
-      const segLen3D = Math.sqrt(segDx*segDx + segDy*segDy + segDz*segDz);
-      if (segLen3D < 0.1) continue;
+    /* ─── Layer 4: Centre markings ─── */
+    if (!isHaul) {
+      // Solid centre line
+      const centerLineW = isPitRd ? 1.2 : 0.7;
+      const centerLineGeom = createRoadGeometry(na, nb, centerLineW, 0.08, false);
+      const centerLineMesh = new THREE.Mesh(centerLineGeom, isPitRd ? matCentrePit : matCentreWhite);
+      scene.add(centerLineMesh);
+    } else {
+      // Dashed yellow centre line for haul roads
+      const dashLen = 6, gapLen = 4;
+      const totalCycle = dashLen + gapLen;
+      const numDashes = Math.floor(lenHorizontal / totalCycle);
+      const centerLineW = 1.0;
+      for (let d = 0; d < numDashes; d++) {
+        const tStart = (d * totalCycle + gapLen/2) / lenHorizontal;
+        const tEnd   = (d * totalCycle + gapLen/2 + dashLen) / lenHorizontal;
+        if (tEnd > 1) break;
 
-      const segPerpXZ = new THREE.Vector3(-segDz, 0, segDx).normalize();
+        const dsx = na.x + dx * tStart, dsz = na.z + dz * tStart;
+        const dex = na.x + dx * tEnd,   dez = na.z + dz * tEnd;
+        
+        const dna = { x: dsx, z: dsz };
+        const dnb = { x: dex, z: dez };
 
-      // Deterministic hash based on road name/edge and segment index to avoid width flickering
-      const hash = Math.sin((a.charCodeAt(0) * 13 + (b.charCodeAt(0) || 0) * 7 + s * 17)) * 0.5 + 0.5;
-      const widthVariation = (hash - 0.5) * 1.5; // variation of up to ±0.75 units
-      const segPaveW = paveW + widthVariation;
-      const segShouldW = shouldW + widthVariation;
-
-      /* ─── Layer 1: Gravel shoulder bed (wider, sits underneath) ─── */
-      const shoulderY = -0.12;  // slightly below pavement
-      const shoulder = alignedMesh(
-        x0, y0 + shoulderY, z0,
-        x1, y1 + shoulderY, z1,
-        segLen3D, shouldH, segShouldW,
-        isPitRd ? matGravelPit : matGravel
-      );
-      scene.add(shoulder);
-
-      /* ─── Layer 2: Asphalt pavement surface ─── */
-      let paveMat;
-      const ratio = Math.max(1, Math.min(8, Math.round(segLen3D / segPaveW)));
-      if (isPitRd) paveMat = matAsphaltPitPool[ratio - 1];
-      else if (isHaul) paveMat = matAsphaltHaulPool[ratio - 1];
-      else paveMat = matAsphaltPool[ratio - 1];
-
-      const pavement = alignedMesh(x0, y0, z0, x1, y1, z1, segLen3D, paveH, segPaveW, paveMat);
-      pavement.castShadow = true;
-      scene.add(pavement);
-
-      /* ─── Layer 3: Edge lines — solid white strips along both sides ─── */
-      const lineH = 0.08;
-      const lineW = 0.6;
-      const edgeOffset = segPaveW / 2 - 0.5;  // just inside the pavement edge
-
-      for (const side of [-1, 1]) {
-        const offX = segPerpXZ.x * edgeOffset * side;
-        const offZ = segPerpXZ.z * edgeOffset * side;
-        const edge = alignedMesh(
-          x0 + offX, y0 + paveH/2 + 0.01, z0 + offZ,
-          x1 + offX, y1 + paveH/2 + 0.01, z1 + offZ,
-          segLen3D, lineH, lineW,
-          isPitRd ? matCentrePit : matEdgeLine
-        );
-        scene.add(edge);
-      }
-
-      /* ─── Layer 4: Centre markings (Solid) ─── */
-      if (!isHaul) {
-        const centreLine = alignedMesh(
-          x0, y0 + paveH/2 + 0.02, z0,
-          x1, y1 + paveH/2 + 0.02, z1,
-          segLen3D, lineH, isPitRd ? 1.2 : 0.7,
-          isPitRd ? matCentrePit : matCentreWhite
-        );
-        scene.add(centreLine);
-      }
-
-      /* ─── Layer 5: Safety earth/rock berms (instead of steel guardrails) ─── */
-      if (isPitRd || isHaul) {
-        const bermH = 3.0, bermW = 2.5;
-        const bermOffset = segPaveW / 2 + 1.2;
-        for (const side of [-1, 1]) {
-          const rOffX = segPerpXZ.x * bermOffset * side;
-          const rOffZ = segPerpXZ.z * bermOffset * side;
-          const berm = alignedMesh(
-            x0 + rOffX, y0 + bermH/2, z0 + rOffZ,
-            x1 + rOffX, y1 + bermH/2, z1 + rOffZ,
-            segLen3D, bermH, bermW,
-            isPitRd ? matGravelPit : matGravel
-          );
-          berm.castShadow = true;
-          berm.receiveShadow = true;
-          scene.add(berm);
-        }
+        const dashGeom = createRoadGeometry(dna, dnb, centerLineW, 0.08, false);
+        const dashMesh = new THREE.Mesh(dashGeom, matCentreYellow);
+        scene.add(dashMesh);
       }
     }
 
-    /* ─── Layer 4: Centre markings (Dashed yellow for haul roads) ─── */
-    if (isHaul) {
-      const dashLen = 6, gapLen = 4;
-      const totalCycle = dashLen + gapLen;
-      const numDashes = Math.floor(len3D / totalCycle);
-      for (let d = 0; d < numDashes; d++) {
-        const tStart = (d * totalCycle + gapLen/2) / len3D;
-        const tEnd   = (d * totalCycle + gapLen/2 + dashLen) / len3D;
-        if (tEnd > 1) break;
-        const dsx = sx + dx * tStart;
-        const dsz = sz + dz * tStart;
-        const dex = sx + dx * tEnd;
-        const dez = sz + dz * tEnd;
-        
-        const involvesPit = PIT_ROAD_NODES.has(a) || PIT_ROAD_NODES.has(b);
-        const dsy = involvesPit
-          ? (sy + (ey - sy) * tStart + paveH/2 + 0.02)
-          : (getZ(dsx + 75, dsz + 225) * 0.04 + 0.3 + paveH/2 + 0.02);
-        const dey = involvesPit
-          ? (sy + (ey - sy) * tEnd + paveH/2 + 0.02)
-          : (getZ(dex + 75, dez + 225) * 0.04 + 0.3 + paveH/2 + 0.02);
-        
-        const dash = alignedMesh(dsx, dsy, dsz, dex, dey, dez,
-          dashLen, 0.08, 1.0, matCentreYellow);
-        scene.add(dash);
+    /* ─── Layer 5: Safety earth/rock berms ─── */
+    if (isPitRd || isHaul) {
+      const bermH = 3.0, bermW = 2.5;
+      const bermOffset = paveW / 2 + 1.2;
+      for (const side of [-1, 1]) {
+        const bermGeom = createBermGeometry(na, nb, bermOffset * side, bermH, bermW);
+        const bermMesh = new THREE.Mesh(bermGeom, isPitRd ? matGravelPit : matGravel);
+        bermMesh.castShadow = true;
+        bermMesh.receiveShadow = true;
+        scene.add(bermMesh);
       }
     }
 
     /* ─── Layer 5: Pit road extras — bollards + chevrons ─── */
     if (isPitRd) {
       const railOffset = paveW / 2 + 1.5;
-      for (const side of [-1, 1]) {
-        const rOffX = perpXZ.x * railOffset * side;
-        const rOffZ = perpXZ.z * railOffset * side;
 
-        const bollardSpacing = 40;
-        const numBollards = Math.max(2, Math.floor(len3D / bollardSpacing));
-        for (let bi = 0; bi <= numBollards; bi++) {
-          const t = bi / numBollards;
-          const bx = sx + dx * t + rOffX;
-          const bz = sz + dz * t + rOffZ;
-          const by = sy + (ey - sy) * t + paveH/2;
+      const bollardSpacing = 40;
+      const numBollards = Math.max(2, Math.floor(lenHorizontal / bollardSpacing));
+      for (let bi = 0; bi <= numBollards; bi++) {
+        const tVal = bi / numBollards;
+        const pos = curve.getPointAt(tVal);
+        const tangent = curve.getTangentAt(tVal);
+        const perpVec = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+        for (const side of [-1, 1]) {
+          const bx = pos.x + perpVec.x * railOffset * side;
+          const by = pos.y;
+          const bz = pos.z + perpVec.z * railOffset * side;
 
           const postH = 3.5;
           const postR = 0.4;
@@ -994,21 +1253,23 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
         }
       }
 
-      // Slope direction chevrons pointing downhill
-      if (Math.abs(dy) > 0.3) {
-        const downhill = ey < sy ? 1 : -1;
+      // Slope direction chevrons
+      const na_y = na.y;
+      const nb_y = nb.y;
+      if (Math.abs(na_y - nb_y) > 0.3) {
+        const downhill = nb_y < na_y ? 1 : -1;
         const chevSpacing = 25;
-        const numChevs = Math.max(1, Math.floor(len3D / chevSpacing));
+        const numChevs = Math.max(1, Math.floor(lenHorizontal / chevSpacing));
         const matChevron = new THREE.MeshBasicMaterial({
           color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide
         });
 
         for (let ci = 1; ci <= numChevs; ci++) {
-          const t = ci / (numChevs + 1);
-          const cx = sx + dx * t;
-          const cz = sz + dz * t;
-          const cy = sy + (ey - sy) * t + paveH/2 + 0.06;
+          const tVal = ci / (numChevs + 1);
+          const pos = curve.getPointAt(tVal);
+          const tangent = curve.getTangentAt(tVal);
 
+          // V-shaped chevron pointing downhill
           const chevShape = new THREE.Shape();
           chevShape.moveTo(0, 2.5);
           chevShape.lineTo(-2, -1.5);
@@ -1022,10 +1283,10 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
           const chev = new THREE.Mesh(chevGeo, matChevron);
           chev.rotation.x = -Math.PI / 2;
 
-          const flatDir = new THREE.Vector3(dx * downhill, 0, dz * downhill).normalize();
+          const flatDir = new THREE.Vector3(tangent.x * downhill, 0, tangent.z * downhill).normalize();
           const angle = Math.atan2(flatDir.x, flatDir.z);
           chev.rotation.z = -angle;
-          chev.position.set(cx, cy, cz);
+          chev.position.set(pos.x, pos.y + 0.08, pos.z);
           scene.add(chev);
         }
       }
@@ -1185,6 +1446,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       const wallColor = new THREE.Color(0x6b5a42).multiplyScalar(rockLightness);
 
       const wallMat = new THREE.MeshStandardMaterial({
+        map: texRock,
         color: wallColor, roughness: 0.95, metalness: 0.02, side: THREE.DoubleSide
       });
 
@@ -1208,14 +1470,29 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
           p2_bot.x, yBot, p2_bot.z,
           p1_bot.x, yBot, p1_bot.z,
         ]);
+        const dx = p2_top.x - p1_top.x;
+        const dz = p2_top.z - p1_top.z;
+        const len = Math.hypot(dx, dz);
+        const texScale = 0.04;
+        const u0 = 0, u1 = len * texScale;
+        const v0 = yTop * texScale, v1 = yBot * texScale;
+        const uvs = new Float32Array([
+          u0, v0,
+          u1, v0,
+          u1, v1,
+          u0, v1,
+        ]);
+        
         const wallGeo = new THREE.BufferGeometry();
         wallGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+        wallGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
         wallGeo.setIndex([0, 1, 2, 0, 2, 3]);
         wallGeo.computeVertexNormals();
         const wallMesh = new THREE.Mesh(wallGeo, wallMat);
         wallMesh.receiveShadow = true;
         wallMesh.castShadow = true;
         scene.add(wallMesh);
+        teleportTargets.push(wallMesh);
       }
     }
 
@@ -1227,14 +1504,23 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     ));
     const bottomShape = new THREE.Shape(bottomPts2D);
     const bottomGeo = new THREE.ShapeGeometry(bottomShape);
+    
+    // Scale UVs for bottom geometry
+    const uvs = bottomGeo.attributes.uv;
+    for (let i = 0; i < uvs.count; i++) {
+      uvs.setXY(i, uvs.getX(i) * 0.02, uvs.getY(i) * 0.02);
+    }
+    
     const bottomMesh = new THREE.Mesh(bottomGeo, new THREE.MeshStandardMaterial({
-      color: 0x1a1208, emissive: 0x0a0804, emissiveIntensity: 0.1,
+      map: texRock,
+      color: 0x3a2a1a, emissive: 0x0a0804, emissiveIntensity: 0.1,
       roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide
     }));
     bottomMesh.rotation.x = -Math.PI / 2;
     bottomMesh.position.y = -(totalDepth) - 0.5;
     bottomMesh.receiveShadow = true;
     scene.add(bottomMesh);
+    teleportTargets.push(bottomMesh);
 
     /* ── Depth fog effect — dark haze at mid-depth ── */
     const fogPts = pts.map(p => new THREE.Vector2(
@@ -1262,17 +1548,68 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   function makeTruck(id) {
     const g = new THREE.Group();
 
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(28, 12, 18),
-      stdMat({ color: C.truckBody, emissive: C.truckBody, emissiveIntensity: 0.3, roughness: 0.5, metalness: 0.25 })
+    // Chassis
+    const chassis = new THREE.Mesh(
+      new THREE.BoxGeometry(26, 6, 12),
+      stdMat({ color: 0x222222, roughness: 0.8, metalness: 0.6 })
     );
-    body.position.y = 9; body.castShadow = true; g.add(body);
+    chassis.position.set(0, 6, 0);
+    chassis.castShadow = true;
+    g.add(chassis);
 
-    const cab = new THREE.Mesh(
-      new THREE.BoxGeometry(11, 10, 16),
-      stdMat({ color: C.truckCab, emissive: C.truckCab, emissiveIntensity: 0.25, roughness: 0.45, metalness: 0.3 })
+    // Dump Bed
+    const bed = new THREE.Mesh(
+      new THREE.BoxGeometry(28, 12, 20),
+      stdMat({ color: C.truckBody, emissive: C.truckBody, emissiveIntensity: 0.1, roughness: 0.5, metalness: 0.3 })
     );
-    cab.position.set(-10, 16, 0); cab.castShadow = true; g.add(cab);
+    bed.position.set(2, 14, 0); 
+    bed.rotation.z = -0.05; // slight angle
+    bed.castShadow = true; 
+    g.add(bed);
+
+    // Cabin
+    const cab = new THREE.Mesh(
+      new THREE.BoxGeometry(8, 8, 10),
+      stdMat({ color: C.truckCab, emissive: C.truckCab, emissiveIntensity: 0.1, roughness: 0.4, metalness: 0.4 })
+    );
+    cab.position.set(-10, 13, 3);
+    cab.castShadow = true;
+    g.add(cab);
+
+    // Walkway Platform
+    const walkway = new THREE.Mesh(
+      new THREE.BoxGeometry(6, 1, 18),
+      stdMat({ color: 0x333333, roughness: 0.9 })
+    );
+    walkway.position.set(-14, 9, 0);
+    g.add(walkway);
+    
+    // Radiator Grille
+    const grille = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 8, 8),
+      stdMat({ color: 0x111111, roughness: 0.8, metalness: 0.8 })
+    );
+    grille.position.set(-14, 7, 0);
+    g.add(grille);
+    
+    // Exhaust pipe
+    const exhaust = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.6, 0.6, 6),
+      stdMat({ color: 0x555555, metalness: 0.8 })
+    );
+    exhaust.position.set(-10, 18, -4);
+    g.add(exhaust);
+    
+    // Hydraulic cylinders
+    for (const z of [-6, 6]) {
+      const hyd = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.8, 0.8, 10),
+        stdMat({ color: 0xaaaaaa, metalness: 0.9, roughness: 0.2 })
+      );
+      hyd.rotation.z = Math.PI / 6;
+      hyd.position.set(-4, 10, z);
+      g.add(hyd);
+    }
 
     /* Headlights */
     for (const z of [-6, 6]) {
@@ -1280,26 +1617,59 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
         new THREE.BoxGeometry(1.5, 2.5, 2.5),
         new THREE.MeshBasicMaterial({ color: C.truckHL })
       );
-      hl.position.set(-16, 11, z); g.add(hl);
+      hl.position.set(-15, 8, z); 
+      g.add(hl);
+      
+      const hlLight = new THREE.PointLight(C.truckHL, 0.8, 50);
+      hlLight.position.set(-16, 8, z);
+      g.add(hlLight);
     }
 
-    /* Wheels */
-    const wMat = stdMat({ color: C.truckWheel, roughness: 0.9 });
-    for (const [wx, wz] of [[-10,-9],[-10,9],[10,-9],[10,9]]) {
-      const w = new THREE.Mesh(new THREE.CylinderGeometry(4,4,5,10), wMat);
-      w.rotation.z = Math.PI/2;
-      w.position.set(wx, 4, wz);
+    /* Massive Wheels */
+    const wMat = stdMat({ color: C.truckWheel, roughness: 0.9, metalness: 0.1 });
+    const hubMat = stdMat({ color: 0x777777, metalness: 0.8 });
+    for (const [wx, wz] of [[-10,-10],[-10,10],[10,-10],[10,10]]) {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 5.5, 6, 16), wMat);
+      w.rotation.x = Math.PI/2;
+      w.position.set(wx, 5.5, wz);
       w.castShadow = true;
       g.add(w);
+      
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 6.2, 8), hubMat);
+      hub.rotation.x = Math.PI/2;
+      hub.position.set(wx, 5.5, wz);
+      g.add(hub);
     }
 
-    /* Label — white text on orange pill */
+    /* Floating Cyan Hex-icon */
+    const hexGrp = new THREE.Group();
+    hexGrp.position.set(0, 32, 0);
+    hexGrp.name = "hexIcon";
+    
+    const hexRing = new THREE.Mesh(
+      new THREE.RingGeometry(3, 4, 6),
+      new THREE.MeshBasicMaterial({ color: 0x00ffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+    );
+    const hexGlow = new THREE.Mesh(
+      new THREE.RingGeometry(2, 5, 6),
+      new THREE.MeshBasicMaterial({ color: 0x00ffff, side: THREE.DoubleSide, transparent: true, opacity: 0.3 })
+    );
+    // Align hex to face camera initially or rotate flat
+    hexRing.rotation.x = Math.PI/2;
+    hexGlow.rotation.x = Math.PI/2;
+    
+    hexGrp.add(hexRing);
+    hexGrp.add(hexGlow);
+    
+    /* Clean cyan text label */
     const lbl = makeLabel(id, {
-      bgColor: "#cc5500", textColor: "#ffffff",
-      fontSize: 14, width: 180, height: 46,
+      bgColor: "rgba(0, 30, 40, 0.7)", textColor: "#00ffff",
+      fontSize: 16, width: 140, height: 40,
     });
-    lbl.position.set(0, 34, 0);
-    g.add(lbl);
+    lbl.position.set(12, 0, 0); 
+    hexGrp.add(lbl);
+
+    g.add(hexGrp);
 
     g.userData.type = "truck";
     return g;
@@ -1381,45 +1751,85 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     const startNodeName = startNodeNames[i % startNodeNames.length];
     const pos = NODES[startNodeName];
 
-    const homePos = { x: pos.x, y: pos.y, z: pos.z };
-    const currentPos = { x: pos.x, y: pos.y, z: pos.z };
+    const homePos = new THREE.Vector3(pos.x, pos.y, pos.z);
+    const currentPos = new THREE.Vector3(pos.x, pos.y, pos.z);
     const towerId = td._id ?? `TWR${String(i+1).padStart(3,"0")}`;
 
-    /* Mast */
-    const mast = new THREE.Mesh(
-      new THREE.CylinderGeometry(2.5, 4.5, 85, 8),
-      stdMat({ color: C.towerMast, emissive: C.towerMast, emissiveIntensity: 0.15, roughness: 0.5, metalness: 0.6 })
+    /* Detailed Truss Tower */
+    const towerGrp = new THREE.Group();
+    towerGrp.position.set(currentPos.x, currentPos.y, currentPos.z);
+    
+    const legGeo = new THREE.CylinderGeometry(0.8, 1.5, 85, 4);
+    const legMat = stdMat({ color: C.towerMast, emissive: C.towerMast, emissiveIntensity: 0.1, roughness: 0.7, metalness: 0.8 });
+    
+    // 4 legs
+    for (const [x, z] of [[-3,-3], [3,-3], [3,3], [-3,3]]) {
+      const leg = new THREE.Mesh(legGeo, legMat);
+      leg.position.set(x, 42.5, z);
+      // Slant inward
+      leg.rotation.x = -z * 0.02;
+      leg.rotation.z = x * 0.02;
+      leg.castShadow = true;
+      towerGrp.add(leg);
+    }
+    
+    // Horizontal braces
+    for (let h = 10; h <= 70; h += 15) {
+      const braceSize = 6 - (h / 85) * 3;
+      const braceGeo = new THREE.BoxGeometry(braceSize * 2, 0.5, braceSize * 2);
+      const brace = new THREE.Mesh(braceGeo, legMat);
+      brace.position.y = h;
+      towerGrp.add(brace);
+    }
+    
+    /* Top platform */
+    const platform = new THREE.Mesh(
+      new THREE.BoxGeometry(10, 1.5, 10),
+      stdMat({ color: 0x334455, roughness: 0.8, metalness: 0.9 })
     );
-    mast.position.set(currentPos.x, currentPos.y + 42.5, currentPos.z);
-    mast.castShadow = true;
-    scene.add(mast);
+    platform.position.y = 85;
+    towerGrp.add(platform);
+    
+    /* Satellite Dish Antennas */
+    for (const rot of [0, Math.PI]) {
+      const dish = new THREE.Mesh(
+        new THREE.SphereGeometry(2.5, 12, 12, 0, Math.PI),
+        stdMat({ color: 0xaaaaaa, metalness: 0.8, roughness: 0.4 })
+      );
+      dish.position.set(rot === 0 ? 5 : -5, 87, 0);
+      dish.rotation.y = rot;
+      dish.rotation.x = Math.PI / 8; // pointing slightly up
+      towerGrp.add(dish);
+    }
 
-    /* Cross arm */
-    const arm = new THREE.Mesh(
-      new THREE.BoxGeometry(34, 2.5, 2.5),
-      stdMat({ color: C.towerArm, emissive: C.towerArm, emissiveIntensity: 0.1, roughness: 0.5, metalness: 0.7 })
+    /* Vertical rod / Beacon support */
+    const rod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5, 0.5, 10),
+      legMat
     );
-    arm.position.set(currentPos.x, currentPos.y + 80, currentPos.z);
-    scene.add(arm);
+    rod.position.y = 90;
+    towerGrp.add(rod);
 
     /* Beacon */
     const beacon = new THREE.Mesh(
-      new THREE.SphereGeometry(5, 14, 14),
+      new THREE.SphereGeometry(3, 14, 14),
       new THREE.MeshBasicMaterial({ color: C.beacon })
     );
-    beacon.position.set(currentPos.x, currentPos.y + 88, currentPos.z);
+    beacon.position.y = 95;
     beacon.userData.pulse = true;
     beacon.userData.pulseOffset = i * 0.5;
-    scene.add(beacon);
+    towerGrp.add(beacon);
 
     const bLight = new THREE.PointLight(C.beacon, 4, 150);
     bLight.position.copy(beacon.position);
-    scene.add(bLight);
+    towerGrp.add(bLight);
 
-    /* Spherical Coverage Signal Area (Both solid and wireframe for a cool sci-fi look!) */
+    scene.add(towerGrp);
+
+    /* Spherical Coverage Signal Area (Geodesic) */
     const covR = (td.coverageRadius ?? 200) * COV_SCALE;
 
-    const sphereGeo = new THREE.SphereGeometry(covR, 32, 16);
+    const sphereGeo = new THREE.IcosahedronGeometry(covR, 2);
     
     // Transparent solid coverage sphere
     const coverageSphere = new THREE.Mesh(
@@ -1427,11 +1837,11 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       new THREE.MeshBasicMaterial({
         color: C.coverage,
         transparent: true,
-        opacity: 0.03,
+        opacity: 0.04,
         depthWrite: false,
       })
     );
-    coverageSphere.position.set(currentPos.x, currentPos.y + 88, currentPos.z);
+    coverageSphere.position.set(currentPos.x, currentPos.y + 95, currentPos.z);
     scene.add(coverageSphere);
 
     // Holographic wireframe coverage sphere
@@ -1440,14 +1850,13 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       new THREE.MeshBasicMaterial({
         color: C.coverage,
         transparent: true,
-        opacity: 0.08,
+        opacity: 0.15,
         wireframe: true,
         depthWrite: false,
       })
     );
     coverageWire.position.copy(coverageSphere.position);
     scene.add(coverageWire);
-
     /* Tower label — bright white on dark bg */
     const tLbl = makeLabel(towerId, {
       bgColor: "#0a2a1a", textColor: "#00ffaa",
@@ -1464,8 +1873,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       path: [],
       currentPos,
       homeNodeName: startNodeName,
-      mast,
-      arm,
+      towerGrp,
       beacon,
       bLight,
       coverageSphere,
@@ -1592,8 +2000,30 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   let frame = 0, animId;
 
   function animate() {
-    animId = requestAnimationFrame(animate);
     frame++;
+
+    /* ── VR Teleport Raycasting ── */
+    if (renderer.xr.isPresenting) {
+      teleportMarker.visible = false;
+      for (const controller of controllers) {
+        if (controller.userData.isSelecting) {
+          tempMatrix.identity().extractRotation(controller.matrixWorld);
+          const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+          const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
+          
+          vrRaycaster.ray.origin.copy(origin);
+          vrRaycaster.ray.direction.copy(direction);
+          
+          const intersects = vrRaycaster.intersectObjects(teleportTargets, false);
+          if (intersects.length > 0) {
+            const hit = intersects[0];
+            teleportMarker.position.copy(hit.point);
+            teleportMarker.visible = true;
+            break;
+          }
+        }
+      }
+    }
 
     truckObjects.forEach(t => {
       t.progress += SPEED;
@@ -1606,16 +2036,36 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       }
       const ai = Math.min(t.segIdx,     t.currentPath.length-1);
       const bi = Math.min(t.segIdx+1,   t.currentPath.length-1);
-      const na = NODES[t.currentPath[ai]];
-      const nb = NODES[t.currentPath[bi]];
-      if (!na||!nb) return;
-      t.mesh.position.x = na.x + (nb.x-na.x)*t.progress;
-      t.mesh.position.z = na.z + (nb.z-na.z)*t.progress;
-      const involvesPit = PIT_ROAD_NODES.has(t.currentPath[ai]) || PIT_ROAD_NODES.has(t.currentPath[bi]);
-      t.mesh.position.y = involvesPit
-        ? (na.y + (nb.y - na.y) * t.progress + 9)
-        : (getZ(t.mesh.position.x + 75, t.mesh.position.z + 225) * 0.04 + 9);
-      t.mesh.rotation.y = Math.atan2(nb.x-na.x, nb.z-na.z);
+      const fromNode = t.currentPath[ai];
+      const toNode = t.currentPath[bi];
+      const curveKey = `${fromNode}_${toNode}`;
+      const curve = roadCurves.get(curveKey);
+      if (curve) {
+        const pos = curve.getPointAt(t.progress);
+        t.mesh.position.copy(pos);
+        t.mesh.position.y += 9.0;
+
+        const tangent = curve.getTangentAt(t.progress);
+        t.mesh.rotation.y = Math.atan2(tangent.x, tangent.z);
+      } else {
+        const na = NODES[fromNode];
+        const nb = NODES[toNode];
+        if (na && nb) {
+          t.mesh.position.x = na.x + (nb.x - na.x) * t.progress;
+          t.mesh.position.z = na.z + (nb.z - na.z) * t.progress;
+          const involvesPit = PIT_ROAD_NODES.has(fromNode) || PIT_ROAD_NODES.has(toNode);
+          t.mesh.position.y = involvesPit
+            ? (na.y + (nb.y - na.y) * t.progress + 9)
+            : (getZ(t.mesh.position.x + 75, t.mesh.position.z + 225) * 0.04 + 9);
+          t.mesh.rotation.y = Math.atan2(nb.x - na.x, nb.z - na.z);
+        }
+      }
+
+      // Rotate hex icon
+      const hexIcon = t.mesh.getObjectByName("hexIcon");
+      if (hexIcon) {
+        hexIcon.rotation.y += 0.05;
+      }
 
       // Spawn dust clouds every 3 frames if truck is moving
       if (frame % 3 === 0) {
@@ -1713,25 +2163,34 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
         }
       }
 
-      // Compute actual position (interpolating between currentNode and nextNode along the road)
-      const na = NODES[tower.currentNodeName];
-      const nb = NODES[tower.nextNodeName];
-      if (na && nb) {
-        tower.currentPos.x = na.x + (nb.x - na.x) * tower.progress;
-        tower.currentPos.z = na.z + (nb.z - na.z) * tower.progress;
-        const involvesPit = PIT_ROAD_NODES.has(tower.currentNodeName) || PIT_ROAD_NODES.has(tower.nextNodeName);
-        tower.currentPos.y = involvesPit
-          ? (na.y + (nb.y - na.y) * tower.progress)
-          : (getZ(tower.currentPos.x + 75, tower.currentPos.z + 225) * 0.04);
+      // Compute actual position (clamping to the curved road path)
+      const fromNode = tower.currentNodeName;
+      const toNode = tower.nextNodeName;
+      const curveKey = `${fromNode}_${toNode}`;
+      const curve = roadCurves.get(curveKey);
+      if (curve) {
+        const pos = curve.getPointAt(tower.progress);
+        tower.currentPos.copy(pos);
+      } else {
+        const na = NODES[fromNode];
+        const nb = NODES[toNode];
+        if (na && nb) {
+          tower.currentPos.x = na.x + (nb.x - na.x) * tower.progress;
+          tower.currentPos.z = na.z + (nb.z - na.z) * tower.progress;
+          const involvesPit = PIT_ROAD_NODES.has(fromNode) || PIT_ROAD_NODES.has(toNode);
+          tower.currentPos.y = involvesPit
+            ? (na.y + (nb.y - na.y) * tower.progress)
+            : (getZ(tower.currentPos.x + 75, tower.currentPos.z + 225) * 0.04);
+        }
       }
 
       // Update Three.js node positions for tower elements
-      tower.mast.position.set(tower.currentPos.x, tower.currentPos.y + 42.5, tower.currentPos.z);
-      tower.arm.position.set(tower.currentPos.x, tower.currentPos.y + 80, tower.currentPos.z);
-      tower.beacon.position.set(tower.currentPos.x, tower.currentPos.y + 88, tower.currentPos.z);
-      tower.bLight.position.copy(tower.beacon.position);
+      if (tower.towerGrp) {
+        tower.towerGrp.position.copy(tower.currentPos);
+      }
+      
       if (tower.coverageSphere) {
-        tower.coverageSphere.position.set(tower.currentPos.x, tower.currentPos.y + 88, tower.currentPos.z);
+        tower.coverageSphere.position.set(tower.currentPos.x, tower.currentPos.y + 95, tower.currentPos.z);
       }
       if (tower.coverageWire) {
         tower.coverageWire.position.copy(tower.coverageSphere.position);
@@ -1784,7 +2243,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   };
   window.addEventListener("resize", onResize);
   container.addEventListener("click", onContainerClick);
-  animate();
+  renderer.setAnimationLoop(animate);
 
   /* ════════════════════════════════════════════════
      PUBLIC API
@@ -1813,7 +2272,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     resetCamera: () => { camera.position.set(0,1000,1400); controls.target.set(0,0,0); controls.update(); },
     toggleHeatmap: () => heatmap.toggle(),
     cleanup: () => {
-      cancelAnimationFrame(animId);
+      renderer.setAnimationLoop(null);
       window.removeEventListener("resize", onResize);
       container.removeEventListener("click", onContainerClick);
       heatmap.dispose();
