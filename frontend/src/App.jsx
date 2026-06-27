@@ -32,52 +32,68 @@ export default function App() {
     if (trucks.length > 0) setAlerts(generateAlerts(trucks));
   }, [trucks]);
 
-  // Update telemetry dynamically every 2 seconds to make the digital twin dynamic and real-time
+  // Update telemetry dynamically every 1 second to make the digital twin dynamic and real-time
   useEffect(() => {
-    if (trucks.length === 0) return;
     const interval = setInterval(() => {
-      setTrucks(prevTrucks => {
-        const sceneTrucks = sceneRef.current?.getTruckObjects?.();
-        const updated = prevTrucks.map(t => {
-          const st = sceneTrucks?.find(stObj => stObj.id === t._id);
+      const sceneTrucks = sceneRef.current?.getTruckObjects?.() || [];
+      const sceneTowers = sceneRef.current?.getTowerObjects?.() || [];
 
-          // Slow fuel decay
-          let newFuel = t.fuel - (Math.random() > 0.7 ? 1 : 0);
-          if (newFuel <= 5) newFuel = 100; // refuel when empty
+      if (sceneTrucks.length > 0) {
+        setTrucks(prevTrucks => {
+          return sceneTrucks.map(st => {
+            const t = prevTrucks.find(p => p._id === st.id) || {};
+            
+            // Slow fuel decay
+            let newFuel = (t.fuel !== undefined) ? t.fuel - (Math.random() > 0.85 ? 1 : 0) : (60 + Math.floor(Math.random() * 40));
+            if (newFuel <= 5) newFuel = 100;
 
-          // Signal strength from 3D scene if available, otherwise fallback fluctuations
-          let newSignal = st ? st.signal : (t.signal + (Math.random() > 0.5 ? 2 : -2));
-          newSignal = Math.max(30, Math.min(100, newSignal));
+            // Signal strength from 3D scene
+            const newSignal = Math.max(10, Math.min(100, Math.round(st.signal ?? t.signal ?? 80)));
 
-          // Battery fluctuations
-          let newBattery = t.battery + (Math.random() > 0.5 ? 1 : -1);
-          newBattery = Math.max(50, Math.min(100, newBattery));
+            // Battery status (mocked or from scene)
+            const newBattery = Math.max(50, Math.min(100, Math.round(st.battery ?? t.battery ?? 100)));
 
-          // Speed from 3D scene if available, otherwise fluctuations
-          let newSpeed = st ? st.speed : ((t.speed ?? 30) + Math.floor(Math.random() * 5) - 2);
-          newSpeed = Math.max(10, Math.min(50, newSpeed));
+            // Speed from 3D scene
+            const newSpeed = Math.round(st.speed ?? t.speed ?? 0);
 
-          // Latency based on signal strength
-          let newLatency = st ? Math.round(10 + (100 - st.signal) * 0.4) : ((t.latency ?? 15) + Math.floor(Math.random() * 3) - 1);
-          newLatency = Math.max(5, Math.min(45, newLatency));
+            // Latency based on signal strength
+            const newLatency = Math.round(st.latency ?? t.latency ?? 15);
 
-          return {
-            ...t,
-            fuel: newFuel,
-            signal: newSignal,
-            battery: newBattery,
-            speed: newSpeed,
-            latency: newLatency,
-          };
+            return {
+              _id: st.id,
+              name: st.id,
+              fuel: newFuel,
+              signal: newSignal,
+              battery: newBattery,
+              speed: newSpeed,
+              latency: newLatency,
+              status: "active"
+            };
+          });
         });
+      }
 
-        return updated;
-      });
-    }, 2000);
+      if (sceneTowers.length > 0) {
+        setTowers(prevTowers => {
+          return sceneTowers.map(st => {
+            const t = prevTowers.find(p => p._id === st.id) || {};
+            return {
+              _id: st.id,
+              status: st.active ? "healthy" : "offline",
+              coverageRadius: Math.round(st.coverageRadius / 0.45),
+              x: Math.round(st.currentPos.x),
+              z: Math.round(st.currentPos.z),
+              battery: Math.round(st.battery ?? t.battery ?? 100),
+            };
+          });
+        });
+      }
+    }, 1000);
+
     return () => clearInterval(interval);
-  }, [trucks.length]);
+  }, []);
 
-  // Sync selectedData when trucks telemetry updates
+  // Sync selectedData when trucks or towers telemetry updates
   useEffect(() => {
     if (selectedType === "truck" && selectedTruckId) {
       const t = trucks.find(t => t._id === selectedTruckId);
@@ -87,8 +103,20 @@ export default function App() {
           battery: t.battery, speed: t.speed ?? 30, latency: t.latency ?? 15,
         });
       }
+    } else if (selectedType === "tower" && selectedTowerId) {
+      const tw = towers.find(t => t._id === selectedTowerId);
+      if (tw) {
+        setSelectedData({
+          id: tw._id,
+          coverage: tw.coverageRadius ?? 200,
+          x: Math.round(tw.x),
+          z: Math.round(tw.z),
+          battery: tw.battery ?? 100,
+          status: tw.status
+        });
+      }
     }
-  }, [trucks, selectedType, selectedTruckId]);
+  }, [trucks, towers, selectedType, selectedTruckId, selectedTowerId]);
 
   const clearSelection = useCallback(() => {
     setSelectedType(null); setSelectedData(null);
@@ -235,7 +263,12 @@ export default function App() {
           {/* Top-right panel */}
           <div style={{ position:"absolute", top:"14px", right:"14px", zIndex:20 }}>
             {selectedData
-              ? <InfoPanel type={selectedType} data={selectedData} onClose={clearSelection}/>
+              ? <InfoPanel
+                  type={selectedType}
+                  data={selectedData}
+                  onClose={clearSelection}
+                  onAction={(action, val, entityId) => sceneRef.current?.sendCommand(action, val, entityId)}
+                />
               : <EnvironmentPanel />
             }
           </div>

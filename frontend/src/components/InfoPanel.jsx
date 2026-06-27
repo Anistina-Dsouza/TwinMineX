@@ -1,5 +1,29 @@
-export default function InfoPanel({ type, data, onClose }) {
+export default function InfoPanel({ type, data, onClose, onAction }) {
   if (!data) return null;
+
+  const btnStyle = {
+    flex: 1,
+    padding: "6px 0",
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid var(--border)",
+    borderRadius: "4px",
+    fontFamily: "var(--font-mono)",
+    fontSize: "9px",
+    letterSpacing: "0.06em",
+    color: "var(--text-primary)",
+    cursor: "pointer",
+    transition: "all 0.12s",
+  };
+
+  const btnHover = (e) => {
+    e.currentTarget.style.background = "rgba(0, 210, 200, 0.12)";
+    e.currentTarget.style.borderColor = "var(--cyan)";
+  };
+
+  const btnLeave = (e) => {
+    e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+    e.currentTarget.style.borderColor = "var(--border)";
+  };
 
   return (
     <div style={{
@@ -58,10 +82,25 @@ export default function InfoPanel({ type, data, onClose }) {
               }}/>
             </div>
           </div>
+          {onAction && (
+            <div style={{ display: "flex", gap: "6px", marginTop: "12px", borderTop: "1px solid var(--border)", paddingTop: "12px" }}>
+              <button
+                onClick={() => onAction("set_truck_speed", 0, data.id)}
+                onMouseEnter={btnHover} onMouseLeave={btnLeave}
+                style={btnStyle}
+              >STOP</button>
+              <button
+                onClick={() => onAction("clear_truck_speed", null, data.id)}
+                onMouseEnter={btnHover} onMouseLeave={btnLeave}
+                style={btnStyle}
+              >AUTO</button>
+            </div>
+          )}
         </>}
 
         {type === "tower" && <>
-          <Row label="STATUS"   value="ACTIVE"                color="var(--green)" />
+          <Row label="STATUS"   value={data.status === "healthy" ? "ACTIVE" : "OFFLINE"} color={data.status === "healthy" ? "var(--green)" : "var(--red)"} />
+          <Row label="BATTERY"  value={`${data.battery}%`} color={data.battery >= 50 ? "var(--green)" : "var(--amber)"} />
           <Row label="COVERAGE" value={`${data.coverage}m`}  color="var(--cyan)" />
           <Row label="POSITION" value={`${data.x}, ${data.z}`} color="var(--text-primary)" />
           {/* Coverage ring vis */}
@@ -70,17 +109,34 @@ export default function InfoPanel({ type, data, onClose }) {
               width:`${Math.min(data.coverage / 4, 80)}px`,
               height:`${Math.min(data.coverage / 4, 80)}px`,
               borderRadius:"50%",
-              border:"2px solid rgba(0,255,157,0.35)",
-              boxShadow:"0 0 16px rgba(0,255,157,0.15)",
+              border: `2px solid ${data.status === "healthy" ? "rgba(0,255,157,0.35)" : "rgba(255,69,96,0.35)"}`,
+              boxShadow: `0 0 16px ${data.status === "healthy" ? "rgba(0,255,157,0.15)" : "rgba(255,69,96,0.15)"}`,
               display:"flex", alignItems:"center", justifyContent:"center",
               position:"relative",
             }}>
               <div style={{
                 width:"10px", height:"10px", borderRadius:"50%",
-                background:"var(--green)", boxShadow:"0 0 10px var(--green)",
+                background: data.status === "healthy" ? "var(--green)" : "var(--red)",
+                boxShadow: `0 0 10px ${data.status === "healthy" ? "var(--green)" : "var(--red)"}`,
               }}/>
             </div>
           </div>
+          {onAction && (
+            <div style={{ display: "flex", gap: "6px", marginTop: "12px", borderTop: "1px solid var(--border)", paddingTop: "12px" }}>
+              <button
+                onClick={() => onAction("set_tower_active", data.status !== "healthy", data.id)}
+                onMouseEnter={btnHover} onMouseLeave={btnLeave}
+                style={btnStyle}
+              >
+                {data.status === "healthy" ? "POWER OFF" : "POWER ON"}
+              </button>
+              <button
+                onClick={() => onAction("reset_tower_battery", null, data.id)}
+                onMouseEnter={btnHover} onMouseLeave={btnLeave}
+                style={btnStyle}
+              >RECHARGE</button>
+            </div>
+          )}
         </>}
       </div>
     </div>

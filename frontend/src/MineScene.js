@@ -786,6 +786,9 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   // grid.position.y = -1.5;
   // scene.add(grid);
 
+  const roadsGroup = new THREE.Group();
+  scene.add(roadsGroup);
+
   /* ════════════════════════════════════════════════
      ROAD NETWORK — realistic mine haul roads
   ════════════════════════════════════════════════ */
@@ -925,7 +928,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
 
         const vx = wx + perpX * (width * offsetFactor);
         const vz = wz + perpZ * (width * offsetFactor);
-        let vy = getZ(vx + OX, vz + OY) * 0.04 + heightOffset;
+        let vy = getZ(vx + OX, vz + OY) * 0.4 + heightOffset;
 
         if (isPavement) {
           const dist = Math.abs(width * offsetFactor);
@@ -980,7 +983,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       const offsetFactor_l = -0.5;
       const vx_l = wx + perpX * (width * offsetFactor_l);
       const vz_l = wz + perpZ * (width * offsetFactor_l);
-      let vy_l = getZ(vx_l + OX, vz_l + OY) * 0.04 + heightOffset;
+      let vy_l = getZ(vx_l + OX, vz_l + OY) * 0.4 + heightOffset;
       if (isPavement) {
         vy_l += fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.2;
       } else {
@@ -993,7 +996,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       const offsetFactor_r = 0.5;
       const vx_r = wx + perpX * (width * offsetFactor_r);
       const vz_r = wz + perpZ * (width * offsetFactor_r);
-      let vy_r = getZ(vx_r + OX, vz_r + OY) * 0.04 + heightOffset;
+      let vy_r = getZ(vx_r + OX, vz_r + OY) * 0.4 + heightOffset;
       if (isPavement) {
         vy_r += fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.2;
       } else {
@@ -1032,6 +1035,143 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     return geom;
   }
 
+  function createSmoothRoadGeometry(pts, width, heightOffset = 0, isPavement = false) {
+    if (pts.length < 2) return null;
+    const geom = new THREE.BufferGeometry();
+    const vertices = [];
+    const indices = [];
+    const uvs = [];
+
+    const segments = pts.length - 1;
+    const widthSegments = isPavement ? 6 : 2;
+
+    let accumulatedLength = 0;
+    const segmentLengths = [];
+    for (let i = 0; i < segments; i++) {
+      const l = pts[i].distanceTo(pts[i+1]);
+      segmentLengths.push(l);
+      accumulatedLength += l;
+    }
+
+    let currentU = 0;
+    for (let i = 0; i <= segments; i++) {
+      const p = pts[i];
+      const prevP = pts[Math.max(0, i - 1)];
+      const nextP = pts[Math.min(segments, i + 1)];
+
+      const dir = new THREE.Vector3().subVectors(nextP, prevP);
+      dir.y = 0;
+      if (dir.lengthSq() < 1e-9) dir.set(0, 0, 1);
+      dir.normalize();
+
+      const perpX = -dir.z;
+      const perpZ = dir.x;
+
+      for (let j = 0; j <= widthSegments; j++) {
+        const t_w = j / widthSegments;
+        const offsetFactor = t_w - 0.5;
+
+        const vx = p.x + perpX * (width * offsetFactor);
+        const vz = p.z + perpZ * (width * offsetFactor);
+        let vy = p.y + heightOffset;
+
+        if (isPavement) {
+          const dist = Math.abs(width * offsetFactor);
+          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.35;
+          const rutCenter = 3.0;
+          const rutWidth = 1.6;
+          const distToRut = Math.abs(dist - rutCenter);
+          let rutVal = 0;
+          if (distToRut < rutWidth) {
+            rutVal = -0.2 * (1.0 + Math.cos(distToRut * Math.PI / rutWidth));
+          }
+          vy += noiseVal + rutVal;
+        } else {
+          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.2;
+          vy += noiseVal;
+        }
+
+        vertices.push(vx, vy, vz);
+        uvs.push(currentU, t_w);
+      }
+      if (i < segments) {
+        currentU += segmentLengths[i];
+      }
+    }
+
+    const rowSize = widthSegments + 1;
+    for (let i = 0; i < segments; i++) {
+      for (let j = 0; j < widthSegments; j++) {
+        const v0 = i * rowSize + j;
+        const v1 = i * rowSize + (j + 1);
+        const v2 = (i + 1) * rowSize + j;
+        const v3 = (i + 1) * rowSize + (j + 1);
+
+        indices.push(v0, v1, v2);
+        indices.push(v1, v3, v2);
+      }
+    }
+
+    const N_top = (segments + 1) * (widthSegments + 1);
+    const thickness = isPavement ? 1.2 : 0.8;
+    currentU = 0;
+    for (let i = 0; i <= segments; i++) {
+      const p = pts[i];
+      const prevP = pts[Math.max(0, i - 1)];
+      const nextP = pts[Math.min(segments, i + 1)];
+
+      const dir = new THREE.Vector3().subVectors(nextP, prevP);
+      dir.y = 0;
+      if (dir.lengthSq() < 1e-9) dir.set(0, 0, 1);
+      dir.normalize();
+
+      const perpX = -dir.z;
+      const perpZ = dir.x;
+
+      const vx_l = p.x + perpX * (width * -0.5);
+      const vz_l = p.z + perpZ * (width * -0.5);
+      let vy_l = p.y + heightOffset;
+      vy_l += fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.2;
+      vertices.push(vx_l, vy_l - thickness, vz_l);
+      uvs.push(currentU, 0);
+
+      const vx_r = p.x + perpX * (width * 0.5);
+      const vz_r = p.z + perpZ * (width * 0.5);
+      let vy_r = p.y + heightOffset;
+      vy_r += fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.2;
+      vertices.push(vx_r, vy_r - thickness, vz_r);
+      uvs.push(currentU, 1);
+
+      if (i < segments) {
+        currentU += segmentLengths[i];
+      }
+    }
+
+    for (let i = 0; i < segments; i++) {
+      const tl_cur = i * rowSize;
+      const tl_nxt = (i + 1) * rowSize;
+      const bl_cur = N_top + i * 2;
+      const bl_nxt = N_top + (i + 1) * 2;
+
+      indices.push(tl_cur, tl_nxt, bl_cur);
+      indices.push(tl_nxt, bl_nxt, bl_cur);
+
+      const tr_cur = i * rowSize + widthSegments;
+      const tr_nxt = (i + 1) * rowSize + widthSegments;
+      const br_cur = N_top + i * 2 + 1;
+      const br_nxt = N_top + (i + 1) * 2 + 1;
+
+      indices.push(tr_cur, br_cur, tr_nxt);
+      indices.push(tr_nxt, br_cur, br_nxt);
+    }
+
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+    return geom;
+  }
+
   // Custom 3D safety berm (earth mound) geometry generator
   function createBermGeometry(na, nb, bermOffset, bermH, bermW) {
     const geom = new THREE.BufferGeometry();
@@ -1055,7 +1195,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       const t = i / segments;
       const wx = ax + dx * t;
       const wz = az + dz * t;
-      const wy = getZ(wx + OX, wz + OY) * 0.04 + 0.02; // shoulder height
+      const wy = getZ(wx + OX, wz + OY) * 0.4 + 0.02; // shoulder height
 
       // Left base of the berm
       const lx = wx + perpX * (bermOffset - bermW / 2);
@@ -1115,7 +1255,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       const wz = na.z + dz * t;
       const rx = wx + OX;
       const ry = wz + OY;
-      const wy = getZ(rx, ry) * 0.04;
+      const wy = getZ(rx, ry) * 0.4;
       curvePoints.push(new THREE.Vector3(wx, wy + 0.06, wz)); // 0.06 is pavement elevation offset
     }
     const curve = new THREE.CatmullRomCurve3(curvePoints);
@@ -1390,152 +1530,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     ss2:["s_sp_2_a","s_sp_2_b","s_sp_2_c","s_sp_2_d","s_sp_2_e","s_sp_2_f","s_sp_2_g","s_sp_2_h"],
   };
 
-  for (const nodeNames of Object.values(pitGroups)) {
-    const pts = nodeNames.map(n => NODES[n]).filter(Boolean);
-    if (pts.length < 3) continue;
-
-    const centerX = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-    const centerZ = pts.reduce((s, p) => s + p.z, 0) / pts.length;
-
-    /* ── Pit geometry parameters ── */
-    const levels          = 10;     // number of terraced benches
-    const benchHeight     = 8;      // vertical drop per bench
-    const totalDepth      = levels * benchHeight; // 80 units deep
-    const maxContraction  = 0.55;   // how much the bottom shrinks vs. top rim
-
-    /* ── Top rim — glowing outline at ground level ── */
-    const rimPts = pts.map(p => new THREE.Vector3(p.x, 0.5, p.z));
-    rimPts.push(rimPts[0].clone()); // close the loop
-    const rimGeo = new THREE.BufferGeometry().setFromPoints(rimPts);
-    const rimLine = new THREE.Line(rimGeo, new THREE.LineBasicMaterial({
-      color: 0xcc8833, linewidth: 2
-    }));
-    scene.add(rimLine);
-
-    /* ── Rim glow ring — subtle amber glow around the pit edge ── */
-    const rimShape = new THREE.Shape(
-      pts.map(p => new THREE.Vector2(p.x, p.z))
-    );
-    const innerRimScale = 0.92;
-    const rimHole = new THREE.Path(
-      pts.map(p => new THREE.Vector2(
-        centerX + (p.x - centerX) * innerRimScale,
-        centerZ + (p.z - centerZ) * innerRimScale
-      ))
-    );
-    rimShape.holes.push(rimHole);
-    const rimFillGeo = new THREE.ShapeGeometry(rimShape);
-    const rimFill = new THREE.Mesh(rimFillGeo, new THREE.MeshBasicMaterial({
-      color: 0x886622, transparent: true, opacity: 0.3, side: THREE.DoubleSide
-    }));
-    rimFill.rotation.x = -Math.PI / 2;
-    rimFill.position.y = 0.3;
-    scene.add(rimFill);
-
-    /* ── Sloped benches — each level has a sloped wall segment forming a continuous slope ── */
-    for (let i = 0; i < levels; i++) {
-      const t0 = i / levels;
-      const t1 = (i + 1) / levels;
-      const scaleOuter = 1 - t0 * maxContraction;
-      const scaleInner = 1 - t1 * maxContraction;
-      const yTop = -(i * benchHeight) - 0.5;
-      const yBot = -((i + 1) * benchHeight) - 0.5;
-
-      // Colour gradient: lighter rock at top, darker at bottom, smooth transition
-      const rockLightness = 1.0 - (i / levels) * 0.45;
-      const wallColor = new THREE.Color(0x6b5a42).multiplyScalar(rockLightness);
-
-      const wallMat = new THREE.MeshStandardMaterial({
-        map: texRock,
-        color: wallColor, roughness: 0.95, metalness: 0.02, side: THREE.DoubleSide
-      });
-
-      const outerPoly = pts.map(p => ({
-        x: centerX + (p.x - centerX) * scaleOuter,
-        z: centerZ + (p.z - centerZ) * scaleOuter
-      }));
-      const innerPoly = pts.map(p => ({
-        x: centerX + (p.x - centerX) * scaleInner,
-        z: centerZ + (p.z - centerZ) * scaleInner
-      }));
-
-      /* -- Sloped wall segments -- */
-      for (let j = 0; j < outerPoly.length; j++) {
-        const j2 = (j + 1) % outerPoly.length;
-        const p1_top = outerPoly[j], p2_top = outerPoly[j2];
-        const p1_bot = innerPoly[j], p2_bot = innerPoly[j2];
-        const verts = new Float32Array([
-          p1_top.x, yTop, p1_top.z,
-          p2_top.x, yTop, p2_top.z,
-          p2_bot.x, yBot, p2_bot.z,
-          p1_bot.x, yBot, p1_bot.z,
-        ]);
-        const dx = p2_top.x - p1_top.x;
-        const dz = p2_top.z - p1_top.z;
-        const len = Math.hypot(dx, dz);
-        const texScale = 0.04;
-        const u0 = 0, u1 = len * texScale;
-        const v0 = yTop * texScale, v1 = yBot * texScale;
-        const uvs = new Float32Array([
-          u0, v0,
-          u1, v0,
-          u1, v1,
-          u0, v1,
-        ]);
-        
-        const wallGeo = new THREE.BufferGeometry();
-        wallGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-        wallGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-        wallGeo.setIndex([0, 1, 2, 0, 2, 3]);
-        wallGeo.computeVertexNormals();
-        const wallMesh = new THREE.Mesh(wallGeo, wallMat);
-        wallMesh.receiveShadow = true;
-        wallMesh.castShadow = true;
-        scene.add(wallMesh);
-        teleportTargets.push(wallMesh);
-      }
-    }
-
-    /* ── Bottom floor — solid dark fill at the deepest level ── */
-    const bottomScale = 1 - maxContraction;
-    const bottomPts2D = pts.map(p => new THREE.Vector2(
-      centerX + (p.x - centerX) * bottomScale,
-      centerZ + (p.z - centerZ) * bottomScale
-    ));
-    const bottomShape = new THREE.Shape(bottomPts2D);
-    const bottomGeo = new THREE.ShapeGeometry(bottomShape);
-    
-    // Scale UVs for bottom geometry
-    const uvs = bottomGeo.attributes.uv;
-    for (let i = 0; i < uvs.count; i++) {
-      uvs.setXY(i, uvs.getX(i) * 0.02, uvs.getY(i) * 0.02);
-    }
-    
-    const bottomMesh = new THREE.Mesh(bottomGeo, new THREE.MeshStandardMaterial({
-      map: texRock,
-      color: 0x3a2a1a, emissive: 0x0a0804, emissiveIntensity: 0.1,
-      roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide
-    }));
-    bottomMesh.rotation.x = -Math.PI / 2;
-    bottomMesh.position.y = -(totalDepth) - 0.5;
-    bottomMesh.receiveShadow = true;
-    scene.add(bottomMesh);
-    teleportTargets.push(bottomMesh);
-
-    /* ── Depth fog effect — dark haze at mid-depth ── */
-    const fogPts = pts.map(p => new THREE.Vector2(
-      centerX + (p.x - centerX) * 0.75,
-      centerZ + (p.z - centerZ) * 0.75
-    ));
-    const fogShape = new THREE.Shape(fogPts);
-    const fogGeo = new THREE.ShapeGeometry(fogShape);
-    const fogMesh = new THREE.Mesh(fogGeo, new THREE.MeshBasicMaterial({
-      color: 0x0a0806, transparent: true, opacity: 0.35, side: THREE.DoubleSide
-    }));
-    fogMesh.rotation.x = -Math.PI / 2;
-    fogMesh.position.y = -(totalDepth * 0.5);
-    scene.add(fogMesh);
-  }
+  // Pits outlines removed to display paths only
 
   /* ════════════════════════════════════════════════
      TRUCKS — vivid orange, easy to spot
@@ -2271,10 +2266,22 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     },
     resetCamera: () => { camera.position.set(0,1000,1400); controls.target.set(0,0,0); controls.update(); },
     toggleHeatmap: () => heatmap.toggle(),
+    sendCommand: (action, value, entityId = null) => {
+      if (ws && ws.readyState === 1) {
+        const payload = { action, value };
+        if (entityId !== null) payload.id = entityId;
+        ws.send(JSON.stringify(payload));
+        console.log("[ws] Sent command:", payload);
+      }
+    },
     cleanup: () => {
       renderer.setAnimationLoop(null);
       window.removeEventListener("resize", onResize);
       container.removeEventListener("click", onContainerClick);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
       heatmap.dispose();
       renderer.dispose();
       if (legendEl.parentNode) legendEl.parentNode.removeChild(legendEl);

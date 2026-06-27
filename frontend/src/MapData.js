@@ -13,7 +13,7 @@ for (const [name, value] of Object.entries(rawNodes)) {
   const wy = ry - OY;
   NODES[name] = {
     x: wx,
-    y: rz * 0.04, // apply standard elevation scaling
+    y: rz * 0.4, // apply standard elevation scaling
     z: wy,
     _rx: rx,
     _ry: ry,
