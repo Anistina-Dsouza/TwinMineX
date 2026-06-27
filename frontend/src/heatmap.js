@@ -39,9 +39,19 @@ export function createHeatmapOverlay(scene, worldSize = 1000, worldCenter = { x:
     ctx.fillStyle = "rgba(0,0,0,0)";
     ctx.fillRect(0, 0, RES, RES);
 
+    if (!isFinite(worldSize) || worldSize <= 0) {
+      console.warn("Invalid worldSize in heatmap:", worldSize);
+      return;
+    }
+
     trucks.forEach(truck => {
+      if (!truck.mesh) return;
       const wx = truck.mesh.position.x;
       const wz = truck.mesh.position.z;
+
+      if (!isFinite(wx) || !isFinite(wz)) {
+        return;
+      }
 
       // World → canvas coords
       const cx = ((wx - (worldCenter.x - worldSize / 2)) / worldSize) * RES;
@@ -49,6 +59,10 @@ export function createHeatmapOverlay(scene, worldSize = 1000, worldCenter = { x:
 
       const sig = truck.signal ?? 50;
       const radius = 18 + (sig / 100) * 14; // bigger blob = better signal
+
+      if (!isFinite(cx) || !isFinite(cy) || !isFinite(radius) || radius <= 0) {
+        return;
+      }
 
       // Color: green (high signal) → amber → red (low signal)
       let r, g, b;
