@@ -893,34 +893,63 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   const roadCurves = new Map();
   const OX = 75, OY = 225;
 
-  // Smooth, grade-limited 3D road generator – uses terrain sampling + Gaussian smoothing
-  // + 15 % grade clamping + CatmullRom spine so slopes are always mine-truck traversable.
-  function createRoadGeometry(na, nb, width, heightOffset = 0, isPavement = false) {
+  // ── Pre-compute one stable terrain elevation per node (called once before road loop) ──
+  // Returns average getZ over a small disc around the node so all edges sharing a
+  // node converge to exactly the same Y at their shared endpoint.
+  const nodeElevation = new Map();
+  function getNodeElevation(node) {
+    const key = node._key || (node.x + ',' + node.z);
+    if (nodeElevation.has(key)) return nodeElevation.get(key);
+    // Sample terrain in a small disc (r=8 world units) and average
+    const R = 8, steps = 6;
+    let sum = 0, cnt = 0;
+    for (let a = 0; a < steps; a++) {
+      const ang = (a / steps) * Math.PI * 2;
+      for (let ri = 0; ri <= 2; ri++) {
+        const r = (ri / 2) * R;
+        const sx = node.x + Math.cos(ang) * r;
+        const sz = node.z + Math.sin(ang) * r;
+        sum += getZ(sx + OX, sz + OY) * 0.4;
+        cnt++;
+      }
+    }
+    const elev = sum / cnt;
+    nodeElevation.set(key, elev);
+    return elev;
+  }
+
+  // ── Smooth, grade-limited 3D road generator ──
+  // pinY0 / pinY1 : pre-computed node elevations (endpoint heights are LOCKED so
+  // adjacent road segments always meet flush at shared nodes).
+  function createRoadGeometry(na, nb, width, heightOffset = 0, isPavement = false, pinY0 = null, pinY1 = null) {
     const geom = new THREE.BufferGeometry();
-    
+
     const ax = na.x, az = na.z;
     const bx = nb.x, bz = nb.z;
     const dx = bx - ax;
     const dz = bz - az;
     const lenHorizontal = Math.hypot(dx, dz);
-    if (lenHorizontal < 0.5) return new THREE.BufferGeometry();
+    if (lenHorizontal < 0.5) return geom;
 
-    // --- Step 1: Dense terrain sample along centreline ---
-    const SAMPLE_N = Math.max(24, Math.floor(lenHorizontal / 5));
+    // --- Step 1: Dense terrain sample ---
+    const SAMPLE_N = Math.max(32, Math.floor(lenHorizontal / 4));
     const rawY = new Float64Array(SAMPLE_N + 1);
     for (let si = 0; si <= SAMPLE_N; si++) {
-      const t = si / SAMPLE_N;
+      const t  = si / SAMPLE_N;
       const wx = ax + dx * t, wz = az + dz * t;
       rawY[si] = getZ(wx + OX, wz + OY) * 0.4;
     }
+    // Pin endpoints to pre-computed node elevations (ensures segments meet flush)
+    if (pinY0 !== null) rawY[0]        = pinY0;
+    if (pinY1 !== null) rawY[SAMPLE_N] = pinY1;
 
-    // --- Step 2: Multi-pass box-filter (simulates cut/fill earthworks grading) ---
-    const SMOOTH_PASSES = 8;
-    const SMOOTH_RADIUS = Math.max(3, Math.floor(SAMPLE_N / 10));
+    // --- Step 2: Box-filter smoothing (interior only – endpoints stay pinned) ---
+    const SMOOTH_PASSES = 10;
+    const SMOOTH_RADIUS = Math.max(4, Math.floor(SAMPLE_N / 8));
     const smY = rawY.slice();
     for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
       const tmp = smY.slice();
-      for (let si = 0; si <= SAMPLE_N; si++) {
+      for (let si = 1; si < SAMPLE_N; si++) {   // skip 0 and SAMPLE_N – they're pinned
         let sum = 0, cnt = 0;
         for (let k = -SMOOTH_RADIUS; k <= SMOOTH_RADIUS; k++) {
           const idx = si + k;
@@ -929,11 +958,14 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
         smY[si] = sum / cnt;
       }
     }
+    // Restore pinned endpoints after smoothing
+    if (pinY0 !== null) smY[0]        = pinY0;
+    if (pinY1 !== null) smY[SAMPLE_N] = pinY1;
 
-    // --- Step 3: Grade clamping – max 15 % (real open-pit mine-haul limit) ---
+    // --- Step 3: Grade clamping – max 15 % from BOTH ends ---
     const MAX_GRADE = 0.15;
     const stepH = lenHorizontal / SAMPLE_N;
-    const maxDY = MAX_GRADE * stepH;
+    const maxDY  = MAX_GRADE * stepH;
     for (let si = 1; si <= SAMPLE_N; si++) {
       const delta = smY[si] - smY[si - 1];
       if (Math.abs(delta) > maxDY) smY[si] = smY[si - 1] + Math.sign(delta) * maxDY;
@@ -942,8 +974,11 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
       const delta = smY[si] - smY[si + 1];
       if (Math.abs(delta) > maxDY) smY[si] = smY[si + 1] + Math.sign(delta) * maxDY;
     }
+    // Final endpoint pin (grade-clamp may drift them slightly)
+    if (pinY0 !== null) smY[0]        = pinY0;
+    if (pinY1 !== null) smY[SAMPLE_N] = pinY1;
 
-    // --- Step 4: CatmullRom spine through smoothed centreline ---
+    // --- Step 4: CatmullRom spine ---
     const spinePoints = [];
     for (let si = 0; si <= SAMPLE_N; si++) {
       const t = si / SAMPLE_N;
@@ -1216,6 +1251,12 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     return geom;
   }
 
+  // Pre-stamp _key on every node so getNodeElevation can use Map lookups
+  for (const [name, node] of Object.entries(NODES)) {
+    node._key = name;
+    getNodeElevation(node); // warm up the cache
+  }
+
   for (const [a, b] of EDGES) {
     const na = NODES[a], nb = NODES[b];
     if (!na || !nb) continue;
@@ -1225,21 +1266,28 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     const lenHorizontal = Math.hypot(dx, dz);
     if (lenHorizontal < 0.5) continue;
 
+    // Pinned endpoint elevations – shared across ALL layers of this edge
+    const pinY0 = getNodeElevation(na);
+    const pinY1 = getNodeElevation(nb);
+
     // Build smooth grade-limited spine for truck pathfinding (mirrors createRoadGeometry logic)
     {
-      const SAMPLE_N = Math.max(24, Math.floor(lenHorizontal / 5));
+      const SAMPLE_N = Math.max(32, Math.floor(lenHorizontal / 4));
       const rawY = new Float64Array(SAMPLE_N + 1);
       for (let si = 0; si <= SAMPLE_N; si++) {
         const t  = si / SAMPLE_N;
         const wx = na.x + dx * t, wz = na.z + dz * t;
         rawY[si] = getZ(wx + OX, wz + OY) * 0.4;
       }
-      // Box-filter smoothing
-      const SMOOTH_PASSES = 6, SMOOTH_RADIUS = Math.max(2, Math.floor(SAMPLE_N / 12));
+      // Pin endpoints to same node elevations used by road geometry
+      rawY[0]        = pinY0;
+      rawY[SAMPLE_N] = pinY1;
+
+      const SMOOTH_PASSES = 10, SMOOTH_RADIUS = Math.max(4, Math.floor(SAMPLE_N / 8));
       const smY = rawY.slice();
       for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
         const tmp = smY.slice();
-        for (let si = 0; si <= SAMPLE_N; si++) {
+        for (let si = 1; si < SAMPLE_N; si++) {  // skip pinned endpoints
           let sum = 0, cnt = 0;
           for (let k = -SMOOTH_RADIUS; k <= SMOOTH_RADIUS; k++) {
             const idx = si + k;
@@ -1248,6 +1296,9 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
           smY[si] = sum / cnt;
         }
       }
+      smY[0]        = pinY0;
+      smY[SAMPLE_N] = pinY1;
+
       // Grade clamping – max 15 %
       const MAX_GRADE = 0.15, stepH = lenHorizontal / SAMPLE_N, maxDY = MAX_GRADE * stepH;
       for (let si = 1; si <= SAMPLE_N; si++) {
@@ -1258,6 +1309,9 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
         const delta = smY[si] - smY[si + 1];
         if (Math.abs(delta) > maxDY) smY[si] = smY[si + 1] + Math.sign(delta) * maxDY;
       }
+      smY[0]        = pinY0;
+      smY[SAMPLE_N] = pinY1;
+
       const spinePoints = [];
       for (let si = 0; si <= SAMPLE_N; si++) {
         const t = si / SAMPLE_N;
@@ -1277,7 +1331,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     const paveH    = 0.4; // thickness standard
 
     /* ─── Layer 1: Gravel shoulder bed (sits underneath) ─── */
-    const shoulderGeom = createRoadGeometry(na, nb, shouldW, 0.02, false);
+    const shoulderGeom = createRoadGeometry(na, nb, shouldW, 0.02, false, pinY0, pinY1);
     const shoulderMesh = new THREE.Mesh(shoulderGeom, isPitRd ? matGravelPit : matGravel);
     shoulderMesh.receiveShadow = true;
     scene.add(shoulderMesh);
@@ -1286,37 +1340,29 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     /* ─── Layer 2: Dirt road pavement surface ─── */
     const ratio = Math.max(1, Math.min(8, Math.round(lenHorizontal / paveW)));
     const paveMat = isPitRd ? matAsphaltPitPool[ratio - 1] : (isHaul ? matAsphaltHaulPool[ratio - 1] : matAsphaltPool[ratio - 1]);
-    const paveGeom = createRoadGeometry(na, nb, paveW, 0.06, true);
+    const paveGeom = createRoadGeometry(na, nb, paveW, 0.06, true, pinY0, pinY1);
     const pavementMesh = new THREE.Mesh(paveGeom, paveMat);
     pavementMesh.castShadow = true;
     pavementMesh.receiveShadow = true;
     scene.add(pavementMesh);
     teleportTargets.push(pavementMesh);
 
-    /* ─── Layer 3: Edge lines ─── */
+    /* ─── Layer 3: Edge lines – built with proper lateral node offsets ─── */
+    // Build laterally-offset ghost nodes so edge lines sit exactly on the road edge
+    // (avoids the old broken per-vertex post-shift which misaligned with the spline)
+    const perpX0 = -dz / lenHorizontal, perpZ0 = dx / lenHorizontal;
     const edgeOffset = paveW / 2 - 0.5;
     const lineW = 0.6;
 
-    // Left edge line
-    const leftLineGeom = createRoadGeometry(na, nb, lineW, 0.08, false);
-    const leftPos = leftLineGeom.attributes.position;
-    const perpX = -dz / lenHorizontal, perpZ = dx / lenHorizontal;
-    for (let i = 0; i < leftPos.count; i++) {
-      leftPos.setX(i, leftPos.getX(i) - perpX * edgeOffset);
-      leftPos.setZ(i, leftPos.getZ(i) - perpZ * edgeOffset);
-    }
-    leftLineGeom.computeVertexNormals();
+    const naL = { x: na.x - perpX0*edgeOffset, z: na.z - perpZ0*edgeOffset, _key: na._key+'_eL' };
+    const nbL = { x: nb.x - perpX0*edgeOffset, z: nb.z - perpZ0*edgeOffset, _key: nb._key+'_eL' };
+    const leftLineGeom = createRoadGeometry(naL, nbL, lineW, 0.08, false, pinY0, pinY1);
     const leftLineMesh = new THREE.Mesh(leftLineGeom, isPitRd ? matCentrePit : matEdgeLine);
     scene.add(leftLineMesh);
 
-    // Right edge line
-    const rightLineGeom = createRoadGeometry(na, nb, lineW, 0.08, false);
-    const rightPos = rightLineGeom.attributes.position;
-    for (let i = 0; i < rightPos.count; i++) {
-      rightPos.setX(i, rightPos.getX(i) + perpX * edgeOffset);
-      rightPos.setZ(i, rightPos.getZ(i) + perpZ * edgeOffset);
-    }
-    rightLineGeom.computeVertexNormals();
+    const naR = { x: na.x + perpX0*edgeOffset, z: na.z + perpZ0*edgeOffset, _key: na._key+'_eR' };
+    const nbR = { x: nb.x + perpX0*edgeOffset, z: nb.z + perpZ0*edgeOffset, _key: nb._key+'_eR' };
+    const rightLineGeom = createRoadGeometry(naR, nbR, lineW, 0.08, false, pinY0, pinY1);
     const rightLineMesh = new THREE.Mesh(rightLineGeom, isPitRd ? matCentrePit : matEdgeLine);
     scene.add(rightLineMesh);
 
@@ -1324,7 +1370,7 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     if (!isHaul) {
       // Solid centre line
       const centerLineW = isPitRd ? 1.2 : 0.7;
-      const centerLineGeom = createRoadGeometry(na, nb, centerLineW, 0.08, false);
+      const centerLineGeom = createRoadGeometry(na, nb, centerLineW, 0.08, false, pinY0, pinY1);
       const centerLineMesh = new THREE.Mesh(centerLineGeom, isPitRd ? matCentrePit : matCentreWhite);
       scene.add(centerLineMesh);
     } else {
@@ -1340,11 +1386,14 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
 
         const dsx = na.x + dx * tStart, dsz = na.z + dz * tStart;
         const dex = na.x + dx * tEnd,   dez = na.z + dz * tEnd;
-        
+        // Interpolate pinned Y so dashes sit exactly on the road profile
+        const dpY0 = pinY0 + (pinY1 - pinY0) * tStart;
+        const dpY1 = pinY0 + (pinY1 - pinY0) * tEnd;
+
         const dna = { x: dsx, z: dsz };
         const dnb = { x: dex, z: dez };
 
-        const dashGeom = createRoadGeometry(dna, dnb, centerLineW, 0.08, false);
+        const dashGeom = createRoadGeometry(dna, dnb, centerLineW, 0.08, false, dpY0, dpY1);
         const dashMesh = new THREE.Mesh(dashGeom, matCentreYellow);
         scene.add(dashMesh);
       }
