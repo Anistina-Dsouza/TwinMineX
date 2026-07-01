@@ -1364,6 +1364,8 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     }
 
     /* ─── Layer 5: Pit road extras — bollards + chevrons ─── */
+    // Retrieve the smooth spine curve we built above for bollard/chevron placement
+    const curve = roadCurves.get(`${a}_${b}`);
     if (isPitRd) {
       const railOffset = paveW / 2 + 1.5;
 
