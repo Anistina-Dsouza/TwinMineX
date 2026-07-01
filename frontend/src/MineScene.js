@@ -893,7 +893,8 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
   const roadCurves = new Map();
   const OX = 75, OY = 225;
 
-  // Custom 3D road geometry generator with width subdivision, CPU displacement, and vertical side walls (for 3D volume)
+  // Smooth, grade-limited 3D road generator – uses terrain sampling + Gaussian smoothing
+  // + 15 % grade clamping + CatmullRom spine so slopes are always mine-truck traversable.
   function createRoadGeometry(na, nb, width, heightOffset = 0, isPavement = false) {
     const geom = new THREE.BufferGeometry();
     
@@ -902,170 +903,166 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     const dx = bx - ax;
     const dz = bz - az;
     const lenHorizontal = Math.hypot(dx, dz);
-    
-    const segments = Math.max(8, Math.floor(lenHorizontal / 10));
-    const widthSegments = isPavement ? 6 : 2; // high resolution only for pavement to save vertices
-    
-    const vertices = [];
-    const indices = [];
-    const uvs = [];
+    if (lenHorizontal < 0.5) return new THREE.BufferGeometry();
 
-    const dirX = dx / lenHorizontal;
-    const dirZ = dz / lenHorizontal;
-    const perpX = -dirZ;
-    const perpZ = dirX;
+    // --- Step 1: Dense terrain sample along centreline ---
+    const SAMPLE_N = Math.max(24, Math.floor(lenHorizontal / 5));
+    const rawY = new Float64Array(SAMPLE_N + 1);
+    for (let si = 0; si <= SAMPLE_N; si++) {
+      const t = si / SAMPLE_N;
+      const wx = ax + dx * t, wz = az + dz * t;
+      rawY[si] = getZ(wx + OX, wz + OY) * 0.4;
+    }
 
-    // 1. Generate Top Surface Vertices
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const wx = ax + dx * t;
-      const wz = az + dz * t;
+    // --- Step 2: Multi-pass box-filter (simulates cut/fill earthworks grading) ---
+    const SMOOTH_PASSES = 8;
+    const SMOOTH_RADIUS = Math.max(3, Math.floor(SAMPLE_N / 10));
+    const smY = rawY.slice();
+    for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
+      const tmp = smY.slice();
+      for (let si = 0; si <= SAMPLE_N; si++) {
+        let sum = 0, cnt = 0;
+        for (let k = -SMOOTH_RADIUS; k <= SMOOTH_RADIUS; k++) {
+          const idx = si + k;
+          if (idx >= 0 && idx <= SAMPLE_N) { sum += tmp[idx]; cnt++; }
+        }
+        smY[si] = sum / cnt;
+      }
+    }
+
+    // --- Step 3: Grade clamping – max 15 % (real open-pit mine-haul limit) ---
+    const MAX_GRADE = 0.15;
+    const stepH = lenHorizontal / SAMPLE_N;
+    const maxDY = MAX_GRADE * stepH;
+    for (let si = 1; si <= SAMPLE_N; si++) {
+      const delta = smY[si] - smY[si - 1];
+      if (Math.abs(delta) > maxDY) smY[si] = smY[si - 1] + Math.sign(delta) * maxDY;
+    }
+    for (let si = SAMPLE_N - 1; si >= 0; si--) {
+      const delta = smY[si] - smY[si + 1];
+      if (Math.abs(delta) > maxDY) smY[si] = smY[si + 1] + Math.sign(delta) * maxDY;
+    }
+
+    // --- Step 4: CatmullRom spine through smoothed centreline ---
+    const spinePoints = [];
+    for (let si = 0; si <= SAMPLE_N; si++) {
+      const t = si / SAMPLE_N;
+      spinePoints.push(new THREE.Vector3(ax + dx * t, smY[si], az + dz * t));
+    }
+    const spine = new THREE.CatmullRomCurve3(spinePoints, false, 'catmullrom', 0.5);
+
+    // --- Step 5: Tessellate ribbon along smooth spine ---
+    const CURVE_SEGS = Math.max(24, Math.floor(lenHorizontal / 5));
+    const widthSegments = isPavement ? 6 : 3;
+    const vertices = [], indices = [], uvs = [];
+
+    for (let i = 0; i <= CURVE_SEGS; i++) {
+      const t   = i / CURVE_SEGS;
+      const pos = spine.getPointAt(t);
+      const tan = spine.getTangentAt(t).normalize();
+      const flatTan = new THREE.Vector3(tan.x, 0, tan.z);
+      if (flatTan.lengthSq() < 1e-9) flatTan.set(1, 0, 0); else flatTan.normalize();
+      const perpX = -flatTan.z, perpZ = flatTan.x;
       const u = t * lenHorizontal;
 
       for (let j = 0; j <= widthSegments; j++) {
         const t_w = j / widthSegments;
-        const offsetFactor = t_w - 0.5; // -0.5 to 0.5
-
-        const vx = wx + perpX * (width * offsetFactor);
-        const vz = wz + perpZ * (width * offsetFactor);
-        let vy = getZ(vx + OX, vz + OY) * 0.4 + heightOffset;
+        const off = t_w - 0.5;
+        const vx = pos.x + perpX * (width * off);
+        const vz = pos.z + perpZ * (width * off);
+        let vy = pos.y + heightOffset;
 
         if (isPavement) {
-          const dist = Math.abs(width * offsetFactor);
-          // Apply Perlin noise for unpaved roughness
-          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.35;
-
-          // Tire ruts centered at dist = 3.0
-          const rutCenter = 3.0;
-          const rutWidth = 1.6;
+          const dist = Math.abs(width * off);
+          vy += fbm(vx * 0.08, vz * 0.08, 3) * 0.18;
+          const rutCenter = 3.0, rutWidth = 1.6;
           const distToRut = Math.abs(dist - rutCenter);
-          let rutVal = 0;
-          if (distToRut < rutWidth) {
-            rutVal = -0.2 * (1.0 + Math.cos(distToRut * Math.PI / rutWidth));
-          }
-          vy += noiseVal + rutVal;
+          if (distToRut < rutWidth)
+            vy -= 0.12 * (1.0 + Math.cos(distToRut * Math.PI / rutWidth));
         } else {
-          // Shoulder gets noise roughness
-          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.2;
-          vy += noiseVal;
+          vy += fbm(vx * 0.08, vz * 0.08, 3) * 0.10;
         }
-
         vertices.push(vx, vy, vz);
         uvs.push(u, t_w);
       }
     }
 
-    const N_top = (segments + 1) * (widthSegments + 1);
-
-    // 2. Generate Top Surface Indices
     const rowSize = widthSegments + 1;
-    for (let i = 0; i < segments; i++) {
+    const N_top   = (CURVE_SEGS + 1) * rowSize;
+    for (let i = 0; i < CURVE_SEGS; i++) {
       for (let j = 0; j < widthSegments; j++) {
-        const v0 = i * rowSize + j;
-        const v1 = i * rowSize + (j + 1);
-        const v2 = (i + 1) * rowSize + j;
-        const v3 = (i + 1) * rowSize + (j + 1);
-
-        indices.push(v0, v1, v2);
-        indices.push(v1, v3, v2);
+        const v0 = i*rowSize+j, v1 = i*rowSize+j+1;
+        const v2 = (i+1)*rowSize+j, v3 = (i+1)*rowSize+j+1;
+        indices.push(v0,v1,v2); indices.push(v1,v3,v2);
       }
     }
 
-    // 3. Generate Side Wall Vertices (left and right edges extruded downwards for 3D thickness)
-    const thickness = isPavement ? 1.2 : 0.8;
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const wx = ax + dx * t;
-      const wz = az + dz * t;
+    // Side walls extruded downward for 3-D volume
+    const thickness = isPavement ? 1.4 : 0.9;
+    for (let i = 0; i <= CURVE_SEGS; i++) {
+      const t   = i / CURVE_SEGS;
+      const pos = spine.getPointAt(t);
+      const tan = spine.getTangentAt(t).normalize();
+      const flatTan = new THREE.Vector3(tan.x, 0, tan.z);
+      if (flatTan.lengthSq() < 1e-9) flatTan.set(1, 0, 0); else flatTan.normalize();
+      const perpX = -flatTan.z, perpZ = flatTan.x;
       const u = t * lenHorizontal;
 
-      // Left edge (j = 0)
-      const offsetFactor_l = -0.5;
-      const vx_l = wx + perpX * (width * offsetFactor_l);
-      const vz_l = wz + perpZ * (width * offsetFactor_l);
-      let vy_l = getZ(vx_l + OX, vz_l + OY) * 0.4 + heightOffset;
-      if (isPavement) {
-        vy_l += fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.2;
-      } else {
-        vy_l += fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.2;
-      }
-      vertices.push(vx_l, vy_l - thickness, vz_l);
-      uvs.push(u, 0);
+      const vx_l = pos.x + perpX*(width*-0.5), vz_l = pos.z + perpZ*(width*-0.5);
+      const vy_l = pos.y + heightOffset + fbm(vx_l*0.08, vz_l*0.08, 3)*0.10;
+      vertices.push(vx_l, vy_l - thickness, vz_l); uvs.push(u, 0);
 
-      // Right edge (j = widthSegments)
-      const offsetFactor_r = 0.5;
-      const vx_r = wx + perpX * (width * offsetFactor_r);
-      const vz_r = wz + perpZ * (width * offsetFactor_r);
-      let vy_r = getZ(vx_r + OX, vz_r + OY) * 0.4 + heightOffset;
-      if (isPavement) {
-        vy_r += fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.2;
-      } else {
-        vy_r += fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.2;
-      }
-      vertices.push(vx_r, vy_r - thickness, vz_r);
-      uvs.push(u, 1);
+      const vx_r = pos.x + perpX*(width*0.5), vz_r = pos.z + perpZ*(width*0.5);
+      const vy_r = pos.y + heightOffset + fbm(vx_r*0.08, vz_r*0.08, 3)*0.10;
+      vertices.push(vx_r, vy_r - thickness, vz_r); uvs.push(u, 1);
     }
 
-    // 4. Generate Side Wall Indices
-    for (let i = 0; i < segments; i++) {
-      // Left side wall
-      const tl_cur = i * rowSize;
-      const tl_nxt = (i + 1) * rowSize;
-      const bl_cur = N_top + i * 2;
-      const bl_nxt = N_top + (i + 1) * 2;
-
-      indices.push(tl_cur, tl_nxt, bl_cur);
-      indices.push(tl_nxt, bl_nxt, bl_cur);
-
-      // Right side wall
-      const tr_cur = i * rowSize + widthSegments;
-      const tr_nxt = (i + 1) * rowSize + widthSegments;
-      const br_cur = N_top + i * 2 + 1;
-      const br_nxt = N_top + (i + 1) * 2 + 1;
-
-      indices.push(tr_cur, br_cur, tr_nxt);
-      indices.push(tr_nxt, br_cur, br_nxt);
+    for (let i = 0; i < CURVE_SEGS; i++) {
+      const tl = i*rowSize, tln = (i+1)*rowSize;
+      const bl = N_top+i*2, bln = N_top+(i+1)*2;
+      indices.push(tl, tln, bl); indices.push(tln, bln, bl);
+      const tr = i*rowSize+widthSegments, trn = (i+1)*rowSize+widthSegments;
+      const br = N_top+i*2+1, brn = N_top+(i+1)*2+1;
+      indices.push(tr, br, trn); indices.push(trn, br, brn);
     }
 
     geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geom.setAttribute('uv',       new THREE.Float32BufferAttribute(uvs, 2));
     geom.setIndex(indices);
     geom.computeVertexNormals();
-
     return geom;
   }
 
   function createSmoothRoadGeometry(pts, width, heightOffset = 0, isPavement = false) {
     if (pts.length < 2) return null;
+
+    // Re-fit a CatmullRom through the input pts so the ribbon is smooth
+    // between every supplied control point, then re-sample at fine intervals.
+    const spine = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
+
+    // Compute total arc length for UV mapping
+    let accumulatedLength = 0;
+    for (let i = 0; i < pts.length - 1; i++) accumulatedLength += pts[i].distanceTo(pts[i + 1]);
+
+    const CURVE_SEGS    = Math.max(24, pts.length * 4);
+    const widthSegments = isPavement ? 6 : 3;
+    const segStep       = accumulatedLength / CURVE_SEGS;
+
     const geom = new THREE.BufferGeometry();
     const vertices = [];
     const indices = [];
     const uvs = [];
 
-    const segments = pts.length - 1;
-    const widthSegments = isPavement ? 6 : 2;
-
-    let accumulatedLength = 0;
-    const segmentLengths = [];
-    for (let i = 0; i < segments; i++) {
-      const l = pts[i].distanceTo(pts[i+1]);
-      segmentLengths.push(l);
-      accumulatedLength += l;
-    }
-
     let currentU = 0;
-    for (let i = 0; i <= segments; i++) {
-      const p = pts[i];
-      const prevP = pts[Math.max(0, i - 1)];
-      const nextP = pts[Math.min(segments, i + 1)];
+    for (let i = 0; i <= CURVE_SEGS; i++) {
+      const t   = i / CURVE_SEGS;
+      const p   = spine.getPointAt(t);
+      const tan = spine.getTangentAt(t).normalize();
+      const flatTan = new THREE.Vector3(tan.x, 0, tan.z).normalize();
+      if (flatTan.lengthSq() < 1e-9) flatTan.set(1, 0, 0);
 
-      const dir = new THREE.Vector3().subVectors(nextP, prevP);
-      dir.y = 0;
-      if (dir.lengthSq() < 1e-9) dir.set(0, 0, 1);
-      dir.normalize();
-
-      const perpX = -dir.z;
-      const perpZ = dir.x;
+      const perpX = -flatTan.z;
+      const perpZ =  flatTan.x;
 
       for (let j = 0; j <= widthSegments; j++) {
         const t_w = j / widthSegments;
@@ -1077,96 +1074,78 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
 
         if (isPavement) {
           const dist = Math.abs(width * offsetFactor);
-          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.35;
+          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.18;
           const rutCenter = 3.0;
           const rutWidth = 1.6;
           const distToRut = Math.abs(dist - rutCenter);
           let rutVal = 0;
           if (distToRut < rutWidth) {
-            rutVal = -0.2 * (1.0 + Math.cos(distToRut * Math.PI / rutWidth));
+            rutVal = -0.12 * (1.0 + Math.cos(distToRut * Math.PI / rutWidth));
           }
           vy += noiseVal + rutVal;
         } else {
-          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.2;
+          const noiseVal = fbm(vx * 0.08, vz * 0.08, 3) * 0.10;
           vy += noiseVal;
         }
 
         vertices.push(vx, vy, vz);
         uvs.push(currentU, t_w);
       }
-      if (i < segments) {
-        currentU += segmentLengths[i];
-      }
+      if (i < CURVE_SEGS) currentU += segStep;
     }
 
     const rowSize = widthSegments + 1;
-    for (let i = 0; i < segments; i++) {
-      for (let j = 0; j < widthSegments; j++) {
-        const v0 = i * rowSize + j;
-        const v1 = i * rowSize + (j + 1);
-        const v2 = (i + 1) * rowSize + j;
-        const v3 = (i + 1) * rowSize + (j + 1);
+    const N_top   = (CURVE_SEGS + 1) * rowSize;
 
+    for (let i = 0; i < CURVE_SEGS; i++) {
+      for (let j = 0; j < widthSegments; j++) {
+        const v0 = i * rowSize + j,       v1 = i * rowSize + j + 1;
+        const v2 = (i+1)*rowSize + j,     v3 = (i+1)*rowSize + j + 1;
         indices.push(v0, v1, v2);
         indices.push(v1, v3, v2);
       }
     }
 
-    const N_top = (segments + 1) * (widthSegments + 1);
-    const thickness = isPavement ? 1.2 : 0.8;
+    // Side walls
+    const thickness = isPavement ? 1.4 : 0.9;
     currentU = 0;
-    for (let i = 0; i <= segments; i++) {
-      const p = pts[i];
-      const prevP = pts[Math.max(0, i - 1)];
-      const nextP = pts[Math.min(segments, i + 1)];
-
-      const dir = new THREE.Vector3().subVectors(nextP, prevP);
-      dir.y = 0;
-      if (dir.lengthSq() < 1e-9) dir.set(0, 0, 1);
-      dir.normalize();
-
-      const perpX = -dir.z;
-      const perpZ = dir.x;
+    for (let i = 0; i <= CURVE_SEGS; i++) {
+      const t   = i / CURVE_SEGS;
+      const p   = spine.getPointAt(t);
+      const tan = spine.getTangentAt(t).normalize();
+      const flatTan = new THREE.Vector3(tan.x, 0, tan.z).normalize();
+      if (flatTan.lengthSq() < 1e-9) flatTan.set(1, 0, 0);
+      const perpX = -flatTan.z, perpZ = flatTan.x;
 
       const vx_l = p.x + perpX * (width * -0.5);
       const vz_l = p.z + perpZ * (width * -0.5);
-      let vy_l = p.y + heightOffset;
-      vy_l += fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.2;
+      let vy_l = p.y + heightOffset + fbm(vx_l * 0.08, vz_l * 0.08, 3) * 0.10;
       vertices.push(vx_l, vy_l - thickness, vz_l);
       uvs.push(currentU, 0);
 
       const vx_r = p.x + perpX * (width * 0.5);
       const vz_r = p.z + perpZ * (width * 0.5);
-      let vy_r = p.y + heightOffset;
-      vy_r += fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.2;
+      let vy_r = p.y + heightOffset + fbm(vx_r * 0.08, vz_r * 0.08, 3) * 0.10;
       vertices.push(vx_r, vy_r - thickness, vz_r);
       uvs.push(currentU, 1);
 
-      if (i < segments) {
-        currentU += segmentLengths[i];
-      }
+      if (i < CURVE_SEGS) currentU += segStep;
     }
 
-    for (let i = 0; i < segments; i++) {
-      const tl_cur = i * rowSize;
-      const tl_nxt = (i + 1) * rowSize;
-      const bl_cur = N_top + i * 2;
-      const bl_nxt = N_top + (i + 1) * 2;
-
+    for (let i = 0; i < CURVE_SEGS; i++) {
+      const tl_cur = i*rowSize,       tl_nxt = (i+1)*rowSize;
+      const bl_cur = N_top + i*2,     bl_nxt = N_top + (i+1)*2;
       indices.push(tl_cur, tl_nxt, bl_cur);
       indices.push(tl_nxt, bl_nxt, bl_cur);
 
-      const tr_cur = i * rowSize + widthSegments;
-      const tr_nxt = (i + 1) * rowSize + widthSegments;
-      const br_cur = N_top + i * 2 + 1;
-      const br_nxt = N_top + (i + 1) * 2 + 1;
-
+      const tr_cur = i*rowSize + widthSegments, tr_nxt = (i+1)*rowSize + widthSegments;
+      const br_cur = N_top + i*2 + 1,           br_nxt = N_top + (i+1)*2 + 1;
       indices.push(tr_cur, br_cur, tr_nxt);
       indices.push(tr_nxt, br_cur, br_nxt);
     }
 
     geom.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geom.setAttribute('uv',       new THREE.Float32BufferAttribute(uvs, 2));
     geom.setIndex(indices);
     geom.computeVertexNormals();
     return geom;
@@ -1246,22 +1225,48 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     const lenHorizontal = Math.hypot(dx, dz);
     if (lenHorizontal < 0.5) continue;
 
-    // Generate terrain-conforming 3D curves for asset clamping
-    const curvePoints = [];
-    const segments = Math.max(8, Math.floor(lenHorizontal / 10));
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const wx = na.x + dx * t;
-      const wz = na.z + dz * t;
-      const rx = wx + OX;
-      const ry = wz + OY;
-      const wy = getZ(rx, ry) * 0.4;
-      curvePoints.push(new THREE.Vector3(wx, wy + 0.06, wz)); // 0.06 is pavement elevation offset
+    // Build smooth grade-limited spine for truck pathfinding (mirrors createRoadGeometry logic)
+    {
+      const SAMPLE_N = Math.max(24, Math.floor(lenHorizontal / 5));
+      const rawY = new Float64Array(SAMPLE_N + 1);
+      for (let si = 0; si <= SAMPLE_N; si++) {
+        const t  = si / SAMPLE_N;
+        const wx = na.x + dx * t, wz = na.z + dz * t;
+        rawY[si] = getZ(wx + OX, wz + OY) * 0.4;
+      }
+      // Box-filter smoothing
+      const SMOOTH_PASSES = 6, SMOOTH_RADIUS = Math.max(2, Math.floor(SAMPLE_N / 12));
+      const smY = rawY.slice();
+      for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
+        const tmp = smY.slice();
+        for (let si = 0; si <= SAMPLE_N; si++) {
+          let sum = 0, cnt = 0;
+          for (let k = -SMOOTH_RADIUS; k <= SMOOTH_RADIUS; k++) {
+            const idx = si + k;
+            if (idx >= 0 && idx <= SAMPLE_N) { sum += tmp[idx]; cnt++; }
+          }
+          smY[si] = sum / cnt;
+        }
+      }
+      // Grade clamping – max 15 %
+      const MAX_GRADE = 0.15, stepH = lenHorizontal / SAMPLE_N, maxDY = MAX_GRADE * stepH;
+      for (let si = 1; si <= SAMPLE_N; si++) {
+        const delta = smY[si] - smY[si - 1];
+        if (Math.abs(delta) > maxDY) smY[si] = smY[si - 1] + Math.sign(delta) * maxDY;
+      }
+      for (let si = SAMPLE_N - 1; si >= 0; si--) {
+        const delta = smY[si] - smY[si + 1];
+        if (Math.abs(delta) > maxDY) smY[si] = smY[si + 1] + Math.sign(delta) * maxDY;
+      }
+      const spinePoints = [];
+      for (let si = 0; si <= SAMPLE_N; si++) {
+        const t = si / SAMPLE_N;
+        spinePoints.push(new THREE.Vector3(na.x + dx * t, smY[si] + 0.06, na.z + dz * t));
+      }
+      const curve = new THREE.CatmullRomCurve3(spinePoints, false, 'catmullrom', 0.5);
+      roadCurves.set(`${a}_${b}`, curve);
+      roadCurves.set(`${b}_${a}`, new THREE.CatmullRomCurve3([...spinePoints].reverse(), false, 'catmullrom', 0.5));
     }
-    const curve = new THREE.CatmullRomCurve3(curvePoints);
-    roadCurves.set(`${a}_${b}`, curve);
-    const curvePointsReversed = [...curvePoints].reverse();
-    roadCurves.set(`${b}_${a}`, new THREE.CatmullRomCurve3(curvePointsReversed));
 
     const isHaul  = mainHaulSet.has(a) || mainHaulSet.has(b);
     const isPitRd = PIT_ROAD_NODES.has(a) && PIT_ROAD_NODES.has(b);
