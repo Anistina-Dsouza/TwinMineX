@@ -8,13 +8,21 @@ import EnvironmentPanel  from "./components/EnvironmentPanel";
 import InfoPanel         from "./components/InfoPanel";
 import LiveChartsModal   from "./components/LiveChartsModal";
 import { generateAlerts } from "./components/AlertSystem";
+import RemoteConsole from "./components/RemoteConsole";
 
 export default function App() {
+  const isRemote = window.location.pathname.startsWith("/remote");
+
+  if (isRemote) {
+    return <RemoteConsole />;
+  }
+
   const mountRef  = useRef();
   const sceneRef  = useRef();
 
   const [trucks,  setTrucks]  = useState([]);
   const [towers,  setTowers]  = useState([]);
+  const [localIP, setLocalIP] = useState("");
 
   // Selection
   const [selectedType,    setSelectedType]    = useState(null);
@@ -152,11 +160,73 @@ export default function App() {
     setSelectedData({ id: t._id, coverage: t.coverageRadius ?? 200, x: Math.round(t.x), z: Math.round(t.z) });
   }, [towers]);
 
-  const handleHeatmapToggle = () => {
+  const handleHeatmapToggle = useCallback(() => {
     if (!sceneRef.current) return;
     const nowVisible = sceneRef.current.toggleHeatmap();
     setHeatmapActive(nowVisible);
-  };
+  }, []);
+
+  // Fetch local IP for QR Code
+  useEffect(() => {
+    axios.get("http://localhost:5000/ip")
+      .then(res => setLocalIP(res.data.ip))
+      .catch(err => console.warn("Failed to get local IP", err));
+  }, []);
+
+  // WebSocket broker connection for desktop client (host role)
+  useEffect(() => {
+    const brokerUrl = `ws://localhost:5001`;
+    const socket = new WebSocket(brokerUrl);
+    
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: "register", clientType: "host" }));
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "ui:toggleCharts") {
+          setChartsOpen(prev => !prev);
+        } else if (msg.type === "ui:toggleHeatmap") {
+          handleHeatmapToggle();
+        } else if (msg.type === "select:truck") {
+          selectTruck(msg.id);
+        } else if (msg.type === "select:tower") {
+          handleTowerSelect(msg.id);
+        } else if (msg.type === "action:truck") {
+          if (sceneRef.current) {
+            sceneRef.current.sendCommand(msg.action === "stop" ? "stop" : "auto", 0, msg.id);
+          }
+        } else if (msg.type === "action:tower") {
+          if (sceneRef.current) {
+            if (msg.action === "togglePower") {
+              const sceneTowers = sceneRef.current.getTowerObjects?.() || [];
+              const currentTower = sceneTowers.find(t => t.id === msg.id);
+              if (currentTower) {
+                sceneRef.current.sendCommand("power", currentTower.active ? 0 : 1, msg.id);
+              }
+            } else if (msg.action === "recharge") {
+              sceneRef.current.sendCommand("recharge", 1, msg.id);
+            }
+          }
+        } else if (msg.type === "camera:move") {
+          if (sceneRef.current && sceneRef.current.moveCameraRemote) {
+            sceneRef.current.moveCameraRemote(msg.direction);
+          }
+        } else if (msg.type === "camera:rotate") {
+          if (sceneRef.current && sceneRef.current.rotateCameraRemote) {
+            sceneRef.current.rotateCameraRemote(msg.alpha, msg.beta, msg.gamma);
+          }
+        }
+      } catch (err) {
+        console.error("Broker message error:", err);
+      }
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, [selectTruck, handleTowerSelect, handleHeatmapToggle]);
 
   useEffect(() => {
     async function load() {
@@ -238,6 +308,7 @@ export default function App() {
         onChartsOpen={() => setChartsOpen(true)}
         heatmapActive={heatmapActive}
         onHeatmapToggle={handleHeatmapToggle}
+        localIP={localIP}
       />
 
       <div style={{ flex:1, display:"flex", overflow:"hidden" }}>

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import AlertBell from "./AlertSystem";
 
-export default function TopBar({ truckCount, towerCount, alerts, onAlertTruckSelect, onChartsOpen, heatmapActive, onHeatmapToggle }) {
+export default function TopBar({ truckCount, towerCount, alerts, onAlertTruckSelect, onChartsOpen, heatmapActive, onHeatmapToggle, localIP }) {
+  const [remoteOpen, setRemoteOpen] = useState(false);
   const [time, setTime] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -77,10 +78,72 @@ export default function TopBar({ truckCount, towerCount, alerts, onAlertTruckSel
           activeColor="var(--cyan)"
         />
 
+        {/* Remote console IP & QR */}
+        <ActionBtn
+          active={remoteOpen}
+          onClick={() => setRemoteOpen(!remoteOpen)}
+          title="Scan QR Code to connect mobile phone controller"
+          label="📱 REMOTE CONSOLE"
+          activeColor="var(--cyan)"
+        />
+
         {/* Alert bell */}
         <AlertBell alerts={alerts ?? []} onSelectTruck={onAlertTruckSelect} />
 
       </div>
+
+      {/* QR Code dropdown card */}
+      {remoteOpen && (
+        <div style={{
+          position: "absolute",
+          top: "var(--topbar-h)",
+          right: "100px",
+          width: "200px",
+          background: "rgba(10, 18, 32, 0.95)",
+          border: "1px solid var(--border)",
+          borderTop: "none",
+          borderRadius: "0 0 8px 8px",
+          padding: "16px",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "10px",
+          zIndex: 110,
+          animation: "fade-down 0.2s ease-out"
+        }}>
+          <div style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "8px",
+            color: "var(--cyan)",
+            letterSpacing: "0.1em",
+            textAlign: "center"
+          }}>
+            MOBILE CONTROLLER
+          </div>
+          <img
+            src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&color=00d2c8&bgcolor=0a1220&data=${encodeURIComponent(`http://${localIP || "localhost"}:5173/remote`)}`}
+            alt="Remote Link QR Code"
+            style={{
+              width: "120px",
+              height: "120px",
+              border: "1px solid rgba(0,210,200,0.2)",
+              borderRadius: "4px",
+              padding: "4px",
+              background: "#0a1220"
+            }}
+          />
+          <div style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "8px",
+            color: "var(--text-secondary)",
+            wordBreak: "break-all",
+            textAlign: "center"
+          }}>
+            http://{localIP || "localhost"}:5173/remote
+          </div>
+        </div>
+      )}
 
       {/* Clock */}
       <div style={{ textAlign:"right" }}>
