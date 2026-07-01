@@ -1347,57 +1347,8 @@ export function createScene(container, apiTowers, apiRoutes, onTruckSelect) {
     scene.add(pavementMesh);
     teleportTargets.push(pavementMesh);
 
-    /* ─── Layer 3: Edge lines – built with proper lateral node offsets ─── */
-    // Build laterally-offset ghost nodes so edge lines sit exactly on the road edge
-    // (avoids the old broken per-vertex post-shift which misaligned with the spline)
-    const perpX0 = -dz / lenHorizontal, perpZ0 = dx / lenHorizontal;
-    const edgeOffset = paveW / 2 - 0.5;
-    const lineW = 0.6;
-
-    const naL = { x: na.x - perpX0*edgeOffset, z: na.z - perpZ0*edgeOffset, _key: na._key+'_eL' };
-    const nbL = { x: nb.x - perpX0*edgeOffset, z: nb.z - perpZ0*edgeOffset, _key: nb._key+'_eL' };
-    const leftLineGeom = createRoadGeometry(naL, nbL, lineW, 0.08, false, pinY0, pinY1);
-    const leftLineMesh = new THREE.Mesh(leftLineGeom, isPitRd ? matCentrePit : matEdgeLine);
-    scene.add(leftLineMesh);
-
-    const naR = { x: na.x + perpX0*edgeOffset, z: na.z + perpZ0*edgeOffset, _key: na._key+'_eR' };
-    const nbR = { x: nb.x + perpX0*edgeOffset, z: nb.z + perpZ0*edgeOffset, _key: nb._key+'_eR' };
-    const rightLineGeom = createRoadGeometry(naR, nbR, lineW, 0.08, false, pinY0, pinY1);
-    const rightLineMesh = new THREE.Mesh(rightLineGeom, isPitRd ? matCentrePit : matEdgeLine);
-    scene.add(rightLineMesh);
-
-    /* ─── Layer 4: Centre markings ─── */
-    if (!isHaul) {
-      // Solid centre line
-      const centerLineW = isPitRd ? 1.2 : 0.7;
-      const centerLineGeom = createRoadGeometry(na, nb, centerLineW, 0.08, false, pinY0, pinY1);
-      const centerLineMesh = new THREE.Mesh(centerLineGeom, isPitRd ? matCentrePit : matCentreWhite);
-      scene.add(centerLineMesh);
-    } else {
-      // Dashed yellow centre line for haul roads
-      const dashLen = 6, gapLen = 4;
-      const totalCycle = dashLen + gapLen;
-      const numDashes = Math.floor(lenHorizontal / totalCycle);
-      const centerLineW = 1.0;
-      for (let d = 0; d < numDashes; d++) {
-        const tStart = (d * totalCycle + gapLen/2) / lenHorizontal;
-        const tEnd   = (d * totalCycle + gapLen/2 + dashLen) / lenHorizontal;
-        if (tEnd > 1) break;
-
-        const dsx = na.x + dx * tStart, dsz = na.z + dz * tStart;
-        const dex = na.x + dx * tEnd,   dez = na.z + dz * tEnd;
-        // Interpolate pinned Y so dashes sit exactly on the road profile
-        const dpY0 = pinY0 + (pinY1 - pinY0) * tStart;
-        const dpY1 = pinY0 + (pinY1 - pinY0) * tEnd;
-
-        const dna = { x: dsx, z: dsz };
-        const dnb = { x: dex, z: dez };
-
-        const dashGeom = createRoadGeometry(dna, dnb, centerLineW, 0.08, false, dpY0, dpY1);
-        const dashMesh = new THREE.Mesh(dashGeom, matCentreYellow);
-        scene.add(dashMesh);
-      }
-    }
+    // Edge line stripes and centre markings removed — their offset splines
+    // don't perfectly track the road ribbon so they appear as floating outlines.
 
     /* ─── Layer 5: Safety earth/rock berms ─── */
     if (isPitRd || isHaul) {
